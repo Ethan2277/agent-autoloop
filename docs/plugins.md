@@ -86,6 +86,8 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 通道和中台共用一个 Node 进程，外部调用应异步等待。内置飞书通道的用户查询、发送和更新均异步调用 CLI，发送期间中台仍能接收事件和心跳。
 
+能在回调里直接响应的平台，可以先 `hub.answer`，确认算数后在响应里带上新卡片，点完就显示结果。[feishu-instant](../examples/plugins/feishu-instant/README.md) 是飞书的例子：用官方 Node SDK 自己维持长连接，卡片样子沿用内置飞书通道；它要另装 SDK，并把 App Secret 放进 `secrets.env`。
+
 ## 事件插件
 
 从 [hello-source/source.ts](../examples/plugins/hello-source/source.ts) 开始。它检查 `x-shop-signature` 中的 HMAC-SHA256，再把订单变成事件。

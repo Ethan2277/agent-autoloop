@@ -1,0 +1,10 @@
+{
+  "name": "agent-autoloop-feishu-instant",
+  "private": true,
+  "type": "module",
+  "description": "Feishu channel for agent-autoloop that shows the answer on the card as soon as it is clicked.",
+  "license": "MIT",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0"
+  }
+}
