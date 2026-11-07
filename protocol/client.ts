@@ -55,6 +55,12 @@ export function hubClient(url: string, key: string) {
     state: (before?: number) => call("GET", before === undefined ? "/v1/state" : `/v1/state?before=${before}`),
     cancel: (run: number) => call("POST", `/v1/runs/${run}/cancel`, { body: {} }),
     resolve: (card: number, reason: string) => call("POST", `/v1/cards/${card}/resolve`, { body: { reason } }),
+    // Rule control: facts in the log, rules.json stays as the owner wrote it.
+    pause: (rule: string, body: { reason?: string; until?: string } = {}) =>
+      call("POST", `/v1/rules/${encodeURIComponent(rule)}/pause`, { body }),
+    resume: (rule: string) => call("POST", `/v1/rules/${encodeURIComponent(rule)}/resume`, { body: {} }),
+    run: (rule: string, body: { subject?: string; reason?: string } = {}) =>
+      call("POST", `/v1/rules/${encodeURIComponent(rule)}/run`, { body }),
   };
 }
 export type Hub = ReturnType<typeof hubClient>;

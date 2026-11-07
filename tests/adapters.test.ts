@@ -5,15 +5,20 @@
 // an application's browser connection. A turn that got going and then broke, or was killed before it finished, doesn't
 // say it started, so the worker runs its prompt again; one that never got going says it did, so the worker doesn't start a
 // new session for it; what Claude said before a background task ended is taken for its answer, or starts the wait for a
-// turn that won't exit; the raw messages of a broken Claude run become the reason it failed. A line of output that's JSON
+// turn that won't exit; the raw messages of a broken Claude run become the reason it failed. A receipt an Agent wrote
+// and then lost because a background task called it back for another turn is dropped, so the card it asked for never
+// exists and the work looks untouched; or, carried along, it replaces one the last turn wrote wrongly, so a cancelled
+// review comes back. A line of output that's JSON
 // but no message, like `null`, stops a plugin reading anything. A command line's placeholder pass rewrites the prompt
 // itself — a `{cwd}` or a `$&` the person wrote arrives as the folder or as `{prompt}` — so the program is asked
-// something other than what the event said.
+// something other than what the event said. A built-in agent starts the program it finds, not the one its rules name,
+// so a wrapper that sends Claude Code to another service is never run.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setup } from "./helpers.ts";
+import { readMessage, resultFrom } from "../worker/contract.ts";
 
 process.env.PATH = `/nonexistent:${process.env.PATH}`;
 const { findProgram } = await import("../worker/agents.ts");
@@ -53,6 +58,14 @@ const stubbed = (adapter: Adapter, t: object) => {
     return null;
   }
 };
+
+test("a built-in agent starts the program its rules name, with its own arguments after it", () => {
+  for (const adapter of [claude, codex, dsh]) {
+    const argv = adapter.command({ ...turn, program: "/opt/bin/via-gateway" });
+    assert.equal(argv[0], "/opt/bin/via-gateway");
+    assert.ok(argv.includes("做这件事") || argv.some((part) => part.includes("做这件事")), "the prompt still goes in");
+  }
+});
 
 test("Claude Code: access, new and going on, model", { skip: !stubbed(claude, {}) }, () => {
   const argv = stubbed(claude, {})!;
@@ -186,6 +199,65 @@ test("Claude Code: what it said before a background task ended isn't its answer"
   const done = stream(init, tool, tasks("t1"), said("已启动", 2), tasks(), init, thinking, said("结束了"));
   assert.equal(claude.read(done, null, "").finished, true);
   assert.equal(claude.read(done, 0, "").text, "结束了");
+});
+
+test("Claude Code: a receipt it wrote isn't lost when a background task calls it back", () => {
+  const block = (receipt: object) => "```agent-autoloop\n" + JSON.stringify(receipt) + "\n```";
+  const ask = { title: "要不要修", text: "这个缺陷要不要修", options: ["修", "不修"], recommend: 0, key: "k" };
+  // The task ends after the answer, so Claude Code is called back for another turn that says nothing about the ask.
+  const called = stream(
+    init,
+    tool,
+    tasks("t1"),
+    toolResult,
+    said(`查清楚了，等你决定。\n\n${block({ ask: [ask] })}`, 30),
+    tasks(),
+    init,
+    tool,
+    said("没事可做：已经发过卡了"),
+  );
+  const read = claude.read(called, 0, "");
+  assert.ok(read.text!.startsWith("没事可做：已经发过卡了"), "the last turn's word is still the answer");
+  const handed = resultFrom(readMessage(read.text!), {});
+  assert.equal(handed.problem, undefined, "and it is handed in as a receipt the hub can read");
+  assert.deepEqual(handed.result.ask, [ask]);
+  assert.equal(handed.result.outcome, "nothing", "the last turn's own words decide the outcome");
+  // Called back more than once, the latest receipt it wrote is the one that still counts.
+  const twice = stream(
+    init,
+    said(`第一次\n\n${block({ notice: [{ title: "旧的", text: "旧的通知" }] })}`),
+    init,
+    said(`第二次\n\n${block({ notice: [{ title: "新的", text: "新的通知" }] })}`),
+    init,
+    said("没事可做：都发过了"),
+  );
+  const notices = (text: string) => readMessage(text).receipt?.notice as { title: string; text: string }[] | undefined;
+  assert.equal(notices(claude.read(twice, 0, "").text!)?.[0].title, "新的");
+  // Its own receipt is not replaced by an older one, and with none before it nothing is invented.
+  const own = stream(
+    init,
+    said(`先说一句\n\n${block({ notice: [{ title: "旧的", text: "旧的通知" }] })}`),
+    init,
+    said(`最后\n\n${block({ later: [{ key: "c", at: "2026-11-08T09:00:00+08:00", about: "复查" }] })}`),
+  );
+  const kept = readMessage(claude.read(own, 0, "").text!).receipt as {
+    notice?: unknown;
+    later?: { key: string }[];
+  };
+  assert.equal(kept.later?.[0].key, "c", "it keeps the receipt of its own last turn");
+  assert.equal(kept.notice, undefined, "and no older one is added beside it");
+  assert.equal(claude.read(stream(init, said("先说一句"), init, said("最后一句")), 0, "").text, "最后一句");
+  // A last turn that wrote a receipt wrongly is asked to write it again, not handed an older one in its place.
+  const earlier = said(
+    `先说一句\n\n${block({ later: [{ key: "c", at: "2026-11-08T09:00:00+08:00", about: "复查" }] })}`,
+  );
+  const mislabelled = "最后\n\n```json\n" + JSON.stringify({ later: [{ key: "c", cancel: true }] }) + "\n```";
+  const unclosed = "最后\n\n```agent-autoloop\n" + JSON.stringify({ later: [{ key: "c", cancel: true }] }) + "```";
+  for (const last of [mislabelled, unclosed]) {
+    const message = readMessage(claude.read(stream(init, earlier, init, said(last)), 0, "").text!);
+    assert.equal(message.receipt, undefined, "the older receipt stands in for the one it got wrong");
+    assert.ok(message.problem, "and it isn't asked to write its own again");
+  }
 });
 
 test("Codex: access, new and going on", { skip: !stubbed(codex, {}) }, () => {

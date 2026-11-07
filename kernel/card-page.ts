@@ -40,9 +40,11 @@ export const wordsPage = (words: string) => shell(words, `<p>${escaped(words)}</
 export function cardPage(card: ReturnType<typeof cardView>) {
   const words = `<h1>${escaped(card.title)}</h1>${card.text ? `<p>${escaped(card.text)}</p>` : ""}`;
   if (card.state === "open") {
+    const focused = card.recommend ?? 0;
     const button = (option: string, index: number) => {
       const best = index === card.recommend ? ' class="best"' : "";
-      return `<button name="choice" value="${index}"${best}>${escaped(option)}</button>`;
+      const focus = index === focused ? " autofocus" : "";
+      return `<button name="choice" value="${index}"${best}${focus}>${escaped(option)}</button>`;
     };
     // Its own form: Enter in the box mustn't press the first option.
     // A notice can take a line on how it was handled: optional, and kept with the closing.

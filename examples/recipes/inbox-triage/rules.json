@@ -1,0 +1,57 @@
+{
+  "timezone": "Asia/Shanghai",
+  "askFirst": ["删数据", "停服", "花钱", "对外发消息", "改产品方向", "新建或轮换密钥", "修改权限"],
+  "sources": {
+    "inbox-triage": {
+      "name": "收件箱"
+    }
+  },
+  "agents": {
+    "inbox-collector": {
+      "name": "邮箱读取",
+      "worker": "my-computer",
+      "use": "command",
+      "command": ["node", "{cwd}/collect.ts", "{cwd}/sources.json"]
+    },
+    "inbox-agent": {
+      "name": "收件箱分诊 Agent",
+      "worker": "my-computer",
+      "use": "codex",
+      "access": "edit"
+    }
+  },
+  "rules": [
+    {
+      "name": "读取收件箱",
+      "when": {
+        "cron": "0 8 * * *"
+      },
+      "to": "inbox-collector",
+      "cwd": "~/.agent-autoloop/work/inbox-triage",
+      "group": "inbox-triage",
+      "tell": "needed",
+      "emits": {
+        "source": "inbox-triage",
+        "types": ["inbox.ready"]
+      }
+    },
+    {
+      "name": "整理收件箱清单",
+      "when": {
+        "source": "inbox-triage",
+        "types": ["inbox.ready"]
+      },
+      "to": "inbox-agent",
+      "cwd": "~/.agent-autoloop/work/inbox-triage",
+      "group": "inbox-triage",
+      "skill": "inbox-triage",
+      "tell": "needed"
+    }
+  ],
+  "channels": {
+    "feishu": {
+      "name": "飞书",
+      "answerers": ["ou_REPLACE_ME"]
+    }
+  }
+}

@@ -32,8 +32,9 @@ const isId: Check = (value) => typeof value === "string" && ID.test(value);
 const isCount: Check = (value) => Number.isInteger(value) && (value as number) > 0;
 const isTypes: Check = (value) => isSomeWords(value) && (value as string[]).every((type) => TYPE_PATTERN.test(type));
 const isCron: Check = (value) => typeof value === "string" && parseCron(value) !== null;
-const isFolder: Check = (value) => typeof value === "string" && /^(~\/|\/)/.test(value);
-const FOLDER = "要是以 ~/ 或 / 开头的目录";
+const isFolder: Check = (value) =>
+  typeof value === "string" && /^(~[/\\]|\/|[a-z]:[/\\]|\\\\[^\\]+\\[^\\]+)/i.test(value);
+const FOLDER = "要是绝对目录（如 ~/code、/srv/app、C:\\code 或 \\\\服务器\\共享目录）";
 
 function isKeyOf(table: object): Check {
   return (value) => typeof value === "string" && value in table;
@@ -163,6 +164,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
       ["effort", isText, NOT_EMPTY, true],
       ["access", (value) => ACCESS.includes(value as string), `只能是 ${ACCESS.join("、")}`, true],
       ["command", isSomeWords, "要是命令行的列表", !isObject(agent) || agent.use !== "command"],
+      ["program", isText, "要是一个程序的路径", true],
       ["timeout", isCount, "要是正整数（分钟）", true],
     ]);
     if (isObject(agent)) agent.access ??= "edit";

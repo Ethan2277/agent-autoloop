@@ -2,11 +2,11 @@
 
 先看 [README 的内置插件目录](../README.md#插件体系四个方向都能自由替换)选择已有实现；需要扩展时，从下面三个可运行的最小模板开始，替换业务部分：
 
-| 模板 | 已经演示了什么 | 你要替换什么 |
-|---|---|---|
-| [Agent 模板](../examples/plugins/hello-agent/agent.ts) | 用 `echo` 模拟执行，读取输出与会话编号 | 新 Agent 的启动命令和输出解析 |
-| [通道模板](../examples/plugins/hello-channel/channel.ts) | 领卡片、写到文件、报告送达；通过命令行回答 | 目标平台的发送、更新和回答回调 |
-| [事件插件模板](../examples/plugins/hello-source/source.ts) | 验证 HMAC-SHA256 签名，把模拟订单转换成事件 | 业务系统的验签方式和字段映射 |
+| 模板                                                       | 已经演示了什么                                             | 你要替换什么                   |
+| ---------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------ |
+| [Agent 模板](../examples/plugins/hello-agent/agent.ts)     | 用 `printf` 模拟执行，读取输出、会话编号和「收下了提示词」 | 新 Agent 的启动命令和输出解析  |
+| [通道模板](../examples/plugins/hello-channel/channel.ts)   | 领卡片、写到文件、报告送达；通过命令行回答                 | 目标平台的发送、更新和回答回调 |
+| [事件插件模板](../examples/plugins/hello-source/source.ts) | 验证 HMAC-SHA256 签名，把模拟订单转换成事件                | 业务系统的验签方式和字段映射   |
 
 事件插件、接单程序、通道和命令行共用同一套 HTTP + JSON 接口。只用 Shell 接协议，可以看 [接单脚本](../examples/worker.sh) 和 [通道脚本](../examples/channel.sh)：设置中台地址与密钥后运行，需要 `curl`、`jq`。它们适合演示短任务；长任务使用内置接单程序的心跳、停止和恢复能力。
 
@@ -24,16 +24,16 @@ node --disable-warning=ExperimentalWarning --test --test-name-pattern='agent-aut
 
 ## Agent 插件
 
-从 [hello-agent/agent.ts](../examples/plugins/hello-agent/agent.ts) 开始。它用 `echo` 代替模型，克隆到别处也能运行。
+从 [hello-agent/agent.ts](../examples/plugins/hello-agent/agent.ts) 开始。它用 `printf` 代替模型，克隆到别处也能运行。收下提示词和结束时各打一行，`read` 从第一行就知道这一轮接上了原会话，第二行是它的最后一条消息。
 
-| 导出对象的方法 | 作用 |
-|---|---|
-| `command(turn)` | 返回命令参数数组；参数不作为 shell 代码执行 |
-| `read(stdout, code, stderr)` | 返回 `text`、`session`、`usage`、`sessionUsage`、`error`、`finished`、`started`；运行中 `code` 为 `null` |
-| `link(session)` | 可选，打开这个会话的链接。回执写错时，`read` 返回了 `session` 的插件都只重写回执，和有没有链接无关 |
-| `check()` | 可选，能用返回 `null`，否则返回下一步怎么做 |
+| 导出对象的方法               | 作用                                                                                                                          |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `command(turn)`              | 返回命令参数数组；参数不作为 shell 代码执行                                                                                   |
+| `read(stdout, code, stderr)` | 返回 `text`、`session`、`usage`、`sessionUsage`、`error`、`finished`、`started`；运行中 `code` 为 `null`                      |
+| `link(session)`              | 可选，打开这个会话的链接。回执写错时，`read` 返回了 `session` 的插件都只重写回执，和有没有链接无关                            |
+| `check(program)`             | 可选，`doctor` 问它这个 Agent 现在能不能用：能用返回 `null`，否则返回下一步怎么做。参数是规则里给它写的 `program`，没写就不传 |
 
-`turn` 包含 `prompt`、`session`、`resume`、`cwd`、`access`、`model`、`effort`、`command`、`contextFile`、`folder`。`contextFile` 是资料文件，受限 CLI 需要允许读取 `folder`。`read` 要能处理未写完的输出；CLI 真正完成后才返回 `text`。`read` 抛错或什么也不返回时，还在跑的接着跑，结束后这一轮算没跑成，留在原会话重派。
+`turn` 包含 `prompt`、`session`、`resume`、`cwd`、`access`、`model`、`effort`、`command`、`program`、`contextFile`、`folder`。`contextFile` 是资料文件，受限 CLI 需要允许读取 `folder`。`program` 只在规则里写了才出现，是内置插件要换成的那一个启动程序；第三方插件用不上，收下也可以不理。`read` 要能处理未写完的输出；CLI 真正完成后才返回 `text`。`read` 抛错或什么也不返回时，还在跑的接着跑，结束后这一轮算没跑成，留在原会话重派。
 
 支持 `resume` 的插件，从 Agent 收下提示词起都要返回 `started: true`，包括运行中和出错之后。否则干到一半断了，也会被当成会话接不上，开新会话把业务重做一遍。返回了 `session` 就要按 `turn.resume` 接回原会话：没跑成的重派和写错回执的重写都靠它；接不回去的 CLI 不要返回 `session`。
 
@@ -47,7 +47,11 @@ node --disable-warning=ExperimentalWarning --test --test-name-pattern='agent-aut
 { "name": "Hello", "worker": "my-computer", "use": "hello-agent", "access": "read" }
 ```
 
-只需要打印最后一条消息时，用内置 `command` 加参数数组即可，不必写插件。参数里可以用 `{prompt}`、`{model}`、`{effort}`、`{cwd}`、`{context}`，每个参数只替换一轮，替换进去的提示词原样传给程序：提示词里写着 `{cwd}` 或 `$&`，到程序那边也还是这几个字，不会被再替换一次。运行时还有环境变量 `AGENT_AUTOLOOP_CONTEXT`（资料文件）和 `AGENT_AUTOLOOP_RUN`（第几轮）。
+Codex 的 Windows elevated 沙箱使用专用账号；插件给该账号组增加本轮 `context.json` 的读权限，不更改账号或沙箱模式。Codex 自己也会给用户目录下的文件夹（含数据目录）加这个账号组的读权限，见 [SECURITY](../SECURITY.md)。
+
+Windows 原生运行支持 `.exe`/`.com`、PowerShell `.ps1` 和 npm 生成的 JavaScript `.cmd` 包装（直接执行其 JS 入口，保留中文、多行及引号）。其他 `.bat`/`.cmd` 不作为 shell 源码启动，请用可执行程序或 `node script.js`。Unix 沿用登录 shell 查找命令，Windows 按 PATH 和 PATHEXT 找；Agent 自己也必须支持当前系统。文中的 shell、curl/jq 教程在 Unix 或 WSL 运行。
+
+只需要打印最后一条消息时，用内置 `command` 加参数数组即可，不必写插件。参数里可以用 `{prompt}`、`{model}`、`{effort}`、`{cwd}`、`{context}`，每个参数只替换一轮，替换进去的提示词原样传给程序：提示词里写着 `{cwd}` 或 `$&`，到程序那边也还是这几个字，不会被再替换一次。每个 Agent 进程（包括内置插件配的 `program` 脚本）都能读到环境变量 `AGENT_AUTOLOOP_CONTEXT`（资料文件）和 `AGENT_AUTOLOOP_RUN`（第几轮）。同一轮重试、重写回执时编号不变；回答和到期的复查是新的一轮，编号不同。
 
 DeepSeek Harness 有内置 `dsh` 插件，规则里写 `use: "dsh"`，要 0.2.2 或更新，`agent-autoloop doctor` 会查。现在 npm 的 `latest` 还是旧版，要这样装：`npm install -g @deepseek-ai/dsh@next --allow-scripts=koffi,node-pty,@deepseek-ai/dsh-subprocess-local`。新版 npm 默认不跑依赖的安装脚本，不放行这三个包，装完看着正常，一跑才出错。从旧版升上来的，0.2.2 可能读不到 `~/.dsh/.credentials.yaml` 里的 `refs`，报 `MISSING_CREDENTIAL`：把密钥放进环境变量，Linux 的系统服务放 `~/.config/environment.d/*.conf`。只上报 Token，不上报费用。有用户在 WSL2 上用 0.2.2-rc.1 和第三方 OpenAI 兼容服务实测跑通了问答、用量和 `resume`。它以 `dsh headless --json` 跑一轮，从 `session` 事件拿会话编号，用 `--session-id` 续接，把 `step_end` 的用量汇总为 Token，`final` 事件才算跑完；`access` 每次都映射成 `--permission-mode`，要人批准的调用用 `--approval-policy never` 直接拒绝。规则里的 `model`、`effort` 不起作用，用 DSH 自己的配置。没有可打开的桌面会话链接。DSH 默认把会话日志上传给 DeepSeek，见[它的说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/reference/README.md)。
 
@@ -67,11 +71,11 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 默认导出异步函数，参数是 `{ hub, options, log, signal }`；`options` 来自 `config.json`，不含中台密钥。
 
-| 调用 | 作用 |
-|---|---|
-| `hub.nextCard(50)` | 长轮询领卡片，没卡片返回 `{ card: null }` |
-| `hub.delivered(id, version, ref)` | 报告送达，保存外部消息编号 |
-| `hub.failed(id, version, error)` | 报告发送失败 |
+| 调用                                  | 作用                                                 |
+| ------------------------------------- | ---------------------------------------------------- |
+| `hub.nextCard(50)`                    | 长轮询领卡片，没卡片返回 `{ card: null }`            |
+| `hub.delivered(id, version, ref)`     | 报告送达，保存外部消息编号                           |
+| `hub.failed(id, version, error)`      | 报告发送失败                                         |
 | `hub.answer(id, { choice, by, ref })` | 转交回答；核对回答人和原消息；算数时带回记好后的卡片 |
 
 `ref` 为空就发新消息，有值就更新原消息；不能更新时只报告。没报告的卡片一分钟后重派。`signal` 中止时退出；函数在此之前返回或抛错，都记日志并在 30 秒后重启，所以它要一直运行。插件和中台在同一个进程里：没接住的错误只记日志，不让中台退出。
@@ -102,24 +106,24 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 请求地址是 `/v1/in/shop`；秘密放在 `secrets.env` 的 `AGENT_AUTOLOOP_SECRET_SHOP`（来源名转大写，`-` 换成 `_`；改完重启中台），不写进规则。事件必须有稳定的 `id` 和合法的 `type`，可带 `subject`、`summary`、`detail`、`link`，上限见[协议](protocol.md#来源把世界变成事件)。
 
-来源能直接发标准 JSON 时不必写插件，用来源密钥调用 `POST /v1/events` 即可。
+来源能直接发标准 JSON 时不必写插件，用来源密钥调用 `POST /v1/events` 即可，之后用同一把密钥 `GET /v1/events/<编号>` 查它做到哪了（见[协议](protocol.md#来源把世界变成事件)）。
 
 ## access 实际能做什么
 
 `access` 由插件翻译，不是中台提供的系统沙箱。以下是未额外放宽本机权限时的行为。
 
-| 插件 | `read` | `edit` | `full` |
-|---|---|---|---|
-| Codex | `read-only`：能跑 shell，不能写文件，命令默认不能联网 | `workspace-write`：能跑 shell、写工作目录和临时目录，命令默认不能联网 | `danger-full-access`：能写文件、跑 shell、联网，无审批 |
-| Claude Code | `plan`：能读文件和运行只读命令；其他命令取决于自动审批及本机规则 | `acceptEdits`：再允许目录内文件编辑和常见文件操作；任意 shell 或联网仍需放行 | `bypassPermissions`：跳过工具审批，没有额外系统隔离 |
-| DeepSeek Harness | `read-only`：不能写文件，读文件和联网不受限 | `workspace-write`：命令和文件改动限于工作目录和临时目录，读文件和联网不受限 | `danger-full-access`：不受限制 |
-| ACP | Agent 来问时，同意读和搜索 | 再同意工作目录内的编辑 | 同意它来问的所有操作 |
+| 插件             | `read`                                                           | `edit`                                                                       | `full`                                                 |
+| ---------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Codex            | `read-only`：能跑 shell，不能写文件，命令默认不能联网            | `workspace-write`：能跑 shell、写工作目录和临时目录，命令默认不能联网        | `danger-full-access`：能写文件、跑 shell、联网，无审批 |
+| Claude Code      | `plan`：能读文件和运行只读命令；其他命令取决于自动审批及本机规则 | `acceptEdits`：再允许目录内文件编辑和常见文件操作；任意 shell 或联网仍需放行 | `bypassPermissions`：跳过工具审批，没有额外系统隔离    |
+| DeepSeek Harness | `read-only`：不能写文件，读文件和联网不受限                      | `workspace-write`：命令和文件改动限于工作目录和临时目录，读文件和联网不受限  | `danger-full-access`：不受限制                         |
+| ACP              | Agent 来问时，同意读和搜索                                       | 再同意工作目录内的编辑                                                       | 同意它来问的所有操作                                   |
 
 Codex 的三个档位已用插件命令实跑；DeepSeek Harness 和 Claude Code 分别依据 [DSH 文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/reference/README.md)和[官方权限说明](https://code.claude.com/docs/en/permission-modes)整理，没有调用模型实跑。Codex 的命令网络限制与托管搜索、MCP 不是同一个边界，详见[官方沙箱说明](https://learn.chatgpt.com/docs/agent-approvals-security)。用户的 CLI 配置可能改变上述能力；`read` 也不代表读不到本机密钥。
 
 ACP 的 `access` 只管 Agent 主动来问的操作。规范允许 Agent 不询问就执行，这种操作 `access` 拦不住，要用 Agent 自己的模式限制，比如 `command` 里写 `env INITIAL_AGENT_MODE=read-only …`。ACP 的 `model`、`effort` 不生效，也要在 Agent 自己那边设置。
 
-场景模板据此选权限：早报用 `edit` 写本地文件，issue 用 `edit` 改代码并让固定脚本联网取正文，告警用 `read` 看代码和事件附带的调用栈。反馈处理和飞书摘要用 `edit`，网站排查用 `read`；固定巡检与飞书读取脚本负责联网，摘要 Agent 只读完整快照。`command` 和固定脚本以本机账号运行，不受 `access` 约束。
+场景模板据此选权限：早报用 `edit` 写本地文件，issue 用 `edit` 改代码并让固定脚本联网取正文，告警用 `read` 看代码和事件附带的调用栈。反馈处理、飞书摘要和邮件分诊用 `edit`，网站排查用 `read`；固定巡检、飞书读取和邮箱读取脚本负责联网，摘要与分诊 Agent 只读完整快照。`command` 和固定脚本以本机账号运行，不受 `access` 约束。
 
 ## 一致性测试
 

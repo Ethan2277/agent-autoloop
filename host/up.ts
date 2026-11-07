@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadChannel } from "./channels.ts";
-import { parseListen, readConfig, type ChannelConfig } from "./config.ts";
+import { cantListen, parseListen, readConfig, type ChannelConfig } from "./config.ts";
 import { HOME } from "./home.ts";
 import { runningUp } from "./service.ts";
 import { commitOf } from "./version.ts";
@@ -85,7 +85,7 @@ export async function up() {
     const server = serve(port, host, { commit: commitOf() });
     server.on("listening", () => say(`listening on ${config.hub!.listen}`));
     server.on("error", (error) => {
-      say(`can't listen: ${error}`);
+      say(cantListen(error));
       process.exit(1);
     });
     close = () => {

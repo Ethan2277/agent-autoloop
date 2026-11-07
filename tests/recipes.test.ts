@@ -22,6 +22,7 @@ const NAMES = [
   "feedback",
   "website-watch",
   "feishu-brief",
+  "inbox-triage",
   "browser-handoff",
 ];
 const scratch = mkdtempSync(join(tmpdir(), "agent-autoloop-recipes-"));

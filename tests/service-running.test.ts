@@ -1,10 +1,14 @@
 // Which service runs this on a machine. Failure cases: doctor says a service running from a system-level unit isn't
 // running; an update takes that unit for its own, writes a user-level one beside it, and fails where there's no user
 // manager or starts a second hub where there is; a user-level service isn't restarted by an update; a Mac is asked about
-// systemd. The fake systemctl stands in for both managers, and no test installs anything real.
+// systemd; a service just started counts as done before its hub answers, so the command run next finds nothing there.
+// The fake systemctl stands in for both managers, and no test installs anything real.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setup } from "./helpers.ts";
@@ -20,7 +24,7 @@ process.env.PATH = `${fakes}:${process.env.PATH}`;
 const actual = process.platform;
 const onLinux = () => Object.defineProperty(process, "platform", { value: "linux" });
 onLinux();
-const { restartService, serviceRunning, systemUnit } = await import("../host/service.ts");
+const { restartService, serviceRunning, systemUnit, untilAnswering } = await import("../host/service.ts");
 
 /** `system` and `user` are the units running; without a user manager every --user call fails, as it does for root. */
 function systemctl({ system = false, user = false, manager = true }) {
@@ -31,7 +35,7 @@ function systemctl({ system = false, user = false, manager = true }) {
 echo "$*" >> "${calls}"
 case "$1 $2" in
   "is-active "*) exit ${system ? 0 : 3} ;;
-  "--user is-active") exit ${user ? 0 : 3} ;;
+  "--user is-active") ${user ? "echo active; exit 0" : "echo inactive; exit 3"} ;;
   --user*) exit ${manager ? 0 : 1} ;;
 esac
 `,
@@ -61,6 +65,28 @@ test("an update restarts a user-level service as before", () => {
   assert.ok(called().includes("--user daemon-reload"));
   assert.ok(called().some((call) => call.startsWith("--user restart ")));
   rmSync(userUnits, { recursive: true, force: true });
+});
+
+test("a service just started is waited for until its hub answers; one its manager doesn't have isn't", async () => {
+  systemctl({ user: true });
+  const probe = createServer().listen(0, "127.0.0.1");
+  await once(probe, "listening");
+  const { port } = probe.address() as AddressInfo;
+  probe.close();
+  const url = `http://127.0.0.1:${port}`;
+  const hub = createServer((_, response) => response.end("{}"));
+  const starting = setTimeout(() => hub.listen(port, "127.0.0.1"), 300);
+  try {
+    assert.equal(await untilAnswering(url), true);
+  } finally {
+    clearTimeout(starting);
+    hub.close();
+  }
+  assert.equal(await untilAnswering(url, 300), false, "one that never answers is given up on, and said so");
+  systemctl({});
+  const asked = Date.now();
+  assert.equal(await untilAnswering(url), null, "nothing to wait for");
+  assert.ok(Date.now() - asked < 2_000);
 });
 
 test("with no service at all an update starts none and says nothing", () => {

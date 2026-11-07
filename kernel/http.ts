@@ -3,7 +3,7 @@ import { cardPage, PAGE_HEADERS, wordsPage } from "./card-page.ts";
 import { whose, type Environment } from "./credentials.ts";
 import { AuthError, Conflict, InputError, NotFound } from "./errors.ts";
 import type { Row, View } from "./evolve.ts";
-import { agentsOf, cancels, cardView, configuration } from "./query.ts";
+import { agentsOf, cancels, cardView, configuration, eventOutcome } from "./query.ts";
 import { isAsk } from "../protocol/validate.ts";
 
 export type Services = {
@@ -206,6 +206,32 @@ async function cardAction(call: Call, id: number, action: string) {
   return json({ ok: true });
 }
 
+const CONTROL_FIELDS: Record<string, string[]> = { pause: ["reason", "until"], resume: [], run: ["subject", "reason"] };
+const CONTROL_INPUTS: Record<string, string> = { pause: "pauseRule", resume: "resumeRule", run: "runRule" };
+
+/** Pause, resume or run a rule now: the owner's, kept in the log. */
+async function control(call: Call, encoded: string, action: string) {
+  const holder = requireKey(call, "owner");
+  let name: string;
+  try {
+    name = decodeURIComponent(encoded);
+  } catch {
+    throw new InputError("名字不正确");
+  }
+  const text = await readText(call.request);
+  let given: unknown = {};
+  try {
+    if (text.trim()) given = JSON.parse(text);
+  } catch {
+    throw new InputError("不是 JSON");
+  }
+  if (!given || typeof given !== "object" || Array.isArray(given)) throw new InputError("要是一个 JSON 对象");
+  const unknown = Object.keys(given).filter((field) => !CONTROL_FIELDS[action].includes(field));
+  if (unknown.length) throw new InputError(`不认识的字段：${unknown.join("、")}`);
+  const type = CONTROL_INPUTS[action];
+  return json(action === "resume" ? act(call, type, name) : act(call, type, name, holder, given));
+}
+
 function state(call: Call) {
   requireKey(call, "owner");
   const before = call.url.searchParams.get("before");
@@ -246,6 +272,13 @@ async function route(call: Call): Promise<Response> {
   if (method === "POST" && path === "/v1/events") {
     return json(act(call, "ingest", requireKey(call, "source"), await readJson(request)));
   }
+  const sent = /^\/v1\/events\/([1-9][0-9]*)$/.exec(path);
+  if (method === "GET" && sent) {
+    // Another source's event is as missing as one never sent: a source can't learn which numbers are taken.
+    const found = eventOutcome(call.view, requireKey(call, "source"), Number(sent[1]));
+    if (!found) throw new NotFound("没有这条事件");
+    return json(found);
+  }
   if (method === "POST" && path === "/v1/tell") return tell(call);
   if (method === "GET" && path === "/v1/work") return work(call);
   const [, runPart, action] = /^\/v1\/runs\/([1-9][0-9]*)\/(started|result|cancel|why)$/.exec(path) ?? [];
@@ -263,6 +296,8 @@ async function route(call: Call): Promise<Response> {
   if (method === "GET" && path === "/v1/cards/next") return nextCard(call);
   const card = /^\/v1\/cards\/([1-9][0-9]*)\/(delivered|failed|answer|resolve)$/.exec(path);
   if (method === "POST" && card) return cardAction(call, Number(card[1]), card[2]);
+  const ruleControl = /^\/v1\/rules\/([^/]+)\/(pause|resume|run)$/.exec(path);
+  if (method === "POST" && ruleControl) return control(call, ruleControl[1], ruleControl[2]);
   if (method === "GET" && path === "/v1/state") return state(call);
   if (method === "GET" && path === "/v1/stream") return stream(call);
   return json({ error: "没有这个地址" }, 404);

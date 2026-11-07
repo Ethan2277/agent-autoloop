@@ -17,6 +17,7 @@ export type Card = {
   answer: string | null;
   result: string | null;
   link: string | null;
+  rule?: string;
 };
 export type ChannelContext = {
   hub: Pick<Hub, "nextCard" | "delivered" | "failed" | "answer">;

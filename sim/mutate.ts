@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const edits: [string, string, string, string][] = [
-  ["event-duplicate", "decide.ts", "if (existing) return { event:", "if (false && existing) return { event:"],
+  ["event-duplicate", "decide.ts", "if (existing) {", "if (false && existing) {"],
   ["source-boundary", "decide.ts", "rule.when.source === source", "true"],
   ["parallel-lane", "decide.ts", 'id, rule.parallel ? event.subject : "")', 'id, "")'],
   ["session-in-use", "decide.ts", "going.some((other) => (other.session ?? other.resume) === session)", "false"],

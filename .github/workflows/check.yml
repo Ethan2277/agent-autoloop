@@ -17,7 +17,7 @@ jobs:
   check:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -26,6 +26,7 @@ jobs:
           fetch-depth: 0
       # These jobs stay required on main, so a docs change runs them too and they pass without doing anything.
       - id: scope
+        shell: bash
         run: sh scripts/ci-scope.sh >> "$GITHUB_OUTPUT"
       - if: steps.scope.outputs.scope != 'docs'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -38,11 +39,15 @@ jobs:
         run: npm run format:check
       - if: steps.scope.outputs.scope != 'docs'
         run: npm run typecheck
-      - if: steps.scope.outputs.scope == 'normal' || steps.scope.outputs.scope == 'kernel'
+      - if: runner.os != 'Windows' && (steps.scope.outputs.scope == 'normal' || steps.scope.outputs.scope == 'kernel')
         run: npm run test:quick
       - if: steps.scope.outputs.scope == 'kernel'
         run: npm run test:sim
-      - if: steps.scope.outputs.scope == 'full'
+      - if: runner.os != 'Windows' && steps.scope.outputs.scope == 'full'
         run: npm test
-      - if: steps.scope.outputs.scope != 'docs'
+      - if: runner.os == 'Windows' && steps.scope.outputs.scope != 'docs'
+        run: npm run test:windows
+      - if: runner.os != 'Windows' && steps.scope.outputs.scope != 'docs'
         run: sh scripts/install-smoke.sh
+      - if: runner.os == 'Windows' && steps.scope.outputs.scope != 'docs'
+        run: node --disable-warning=ExperimentalWarning scripts/install-smoke-windows.ts

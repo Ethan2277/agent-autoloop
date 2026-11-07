@@ -3,6 +3,7 @@
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import { backup as copyPages, DatabaseSync } from "node:sqlite";
+import { privateDirectory } from "../host/files.ts";
 
 const DB = "hub.db";
 const KEY = "master.key";
@@ -28,9 +29,7 @@ export async function backup(home: string, target: string) {
   const database = path.join(home, DB);
   if (!existsSync(database)) throw new Error("还没装好：先运行 agent-autoloop init");
   if (existsSync(target) && readdirSync(target).length) throw new Error(`备份目录不是空的：${target}`);
-  mkdirSync(target, { recursive: true, mode: 0o700 });
-  // A mode only reaches a folder this makes, and an empty one may already be there.
-  chmodSync(target, 0o700);
+  privateDirectory(target);
   await copyDatabase(database, path.join(target, DB));
   const files = [DB];
   for (const name of FILES) {
@@ -82,7 +81,7 @@ export async function restore(home: string, source: string) {
     throw new Error("中台还在跑：先停掉它（例如 agent-autoloop service remove，或手动停服务），再恢复");
   }
   readableBackup(source);
-  mkdirSync(home, { recursive: true, mode: 0o700 });
+  privateDirectory(home);
   const safety = path.join(home, `restore-before-${new Date().toISOString().replace(/[:.]/g, "-")}`);
   mkdirSync(safety, { mode: 0o700 });
   // The WAL belongs to the file that's leaving: a stale one next to the restored database would be applied to it. A file

@@ -52,6 +52,7 @@
       "model": "…",
       "effort": "high",
       "access": "edit",
+      "program": "…", // 可选：内置插件启动这个程序，代替自动找到的那个，比如设好环境变量再 exec claude 的脚本
     },
     "cursor": {
       "name": "Cursor",
@@ -92,6 +93,8 @@
 }
 ```
 
+`cwd` 由接单电脑解释，可用 Unix 绝对路径、Windows 盘符或 UNC 路径、`~/` 或 `~\` 开头的家目录路径；中台与接单电脑可以用不同操作系统。接受 Windows 路径是兼容的能力扩展，原有 `/v1`、规则与插件用法不变。
+
 `elsewhere` 是在别处定时跑的任务：中台不启动它们，只在 `agent-autoloop status` 里列出来，它们要找你时用 `POST /v1/tell`。写了 `cwd`（还要写 `skill` 或 `prompt`）的也能问你：卡片带选项，你答了，中台像规则的一轮那样叫醒 `to`，在 `cwd` 照 `skill`、`prompt` 接着做，这一轮的组就是任务名，一次一轮，不接定时任务自己的会话。规则写错了，文件改动不生效，旧规则继续跑，并推一张卡片告诉你错在哪。
 
 写了 `resume`，一轮开始时如果事项的上一轮做完了（包括没事可做）、留下了会话，就接着那个会话；会话越接越长，Token 和费用也会跟着涨。这几种情况开新会话：上一轮被停掉了（你停的，或连续失败停下的），接着它多半还是同样的结果；上一轮是别的 Agent 跑的；上一轮没有会话。没写 `parallel` 时整条规则是一个事项，所有事件接同一个会话；事件不带 `subject` 时也都算同一个事项。回答和到期的复查仍回到提问和约定时的会话，重派的也留在自己的会话。
@@ -112,6 +115,29 @@ POST /v1/events                    Authorization: Bearer <来源的密钥>
 - `subject` 只能是标识符（字母、数字和 `# . _ : / @ -`），`link` 只能是纯 ASCII 网址，因为它们会进提示词。`summary`、`detail` 不进提示词。
 - 没有规则匹配的事件也留着，`agent-autoloop status` 看得到。
 - 字段上限：`id` 200 个字、`subject` 100、`summary` 200、`detail` 4000、`link` 500，`type` 64 个字符。
+
+来源想知道发出去的事件后来怎么样了，用同一把密钥按应答里的 `event` 编号查，隔一段时间查一下还没结束的就行：
+
+```
+GET /v1/events/34                  Authorization: Bearer <来源的密钥>
+→ 200 { "event": 34, "routed": ["处理意见"], "paused": [], "runs": [
+    { "run": 41, "rule": "处理意见", "state": "done", "attempts": 0, "error": null,
+      "finishedAt": "2026-11-07T08:00:00.000Z", "summary": "…", "events": [ { "id": "…", "type": "…", … } ] } ] }
+```
+
+- 只能查自己发的事件。别的来源的事件和不存在的一样，返回 404。
+- `runs` 是这条事件现在所在的每一轮，按编号排。没跑成的一轮重试时会把同一事项后来的事件并进来，所以并过的事件会出现在更早的那一轮里。
+- `attempts` 是这一轮已经没跑成几次，`error` 是最近一次没跑成的原因，做成后清空。
+- `summary` 是回执里的一句话，`events` 是回执里发出、中台新记下的事件（写法和回执一样）；和已有事件同一个 `id` 的只记一次，不算在这一轮。这一轮还合进了别的来源的事件时，两项都是 `null`：那是 Agent 读了别人的资料后写的。加这个接口之前的版本里，回执发出的事件没记在轮次上，`events` 是空的。
+
+| `state`     | 意思                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| `queued`    | 排队；`attempts` 大于 0 时是没跑成、等重试                                                 |
+| `claimed`   | 接单程序领走了，在跑                                                                       |
+| `unknown`   | 接单程序 5 分钟没报这一轮，不确定还在不在跑；之后交的结果照样收                            |
+| `done`      | 做成了                                                                                     |
+| `nothing`   | 看过了，没事可做                                                                           |
+| `cancelled` | 结束了，没做成：连续 10 次没跑成不再重试、规则删掉了（`summary` 写明是哪种），或本人停掉的 |
 
 三种别的进法，到中台都是同一种事件：
 
@@ -149,7 +175,7 @@ GET /v1/work?claim=<这次领活的编号>&wait=50&running=7,8&capacity=1    Aut
 - 没活时最多等 `wait` 秒，新活一来立即返回。`running` 是手上在跑的，同时也是心跳。`capacity=0` 只报到、不领活。
 - 手上有活时可以每秒来问活、查取消。心跳最多一分钟记进日志一次，手上有几轮都只记一条；通道领卡片也一样。所以 `/v1/state` 的 `seenAt` 可能比最后一次来的时间早不到一分钟，“5 分钟没报”“10 分钟没连上”也可能因此提前不到一分钟判断；`online` 留了这一分钟的余量，记录后 3 分钟内都算在线。
 - 响应丢了，用同一个 `claim` 再来一次，拿回的是同一份活。
-- `cancel` 是要停掉的。接单程序先向整个进程组发停止信号，10 秒后仍有进程运行就强制结束；确认组内没有活进程后才交 `outcome: "cancelled"`，这个事项才放开。停止期间重启接单程序也继续这一步。要停的这一轮交回 `failed` 也算停了，不再重试。
+- `cancel` 是要停掉的。Unix 接单程序先向整个进程组发停止信号，10 秒后仍有进程运行就强制结束；Windows 每轮运行在独立 Job Object 中，停止时结束整个子进程树。确认进程已停止后才交 `outcome: "cancelled"`，这个事项才放开。停止期间重启接单程序也继续这一步。要停的这一轮交回 `failed` 也算停了，不再重试。
 
 ```jsonc
 // Job：一轮的全部。token 只对这一轮的这一次执行有效。
@@ -214,7 +240,7 @@ POST /v1/runs/12/result    Authorization: Bearer <token>   Result
 ```
 ````
 
-代码块可有可无。Agent 不需要装任何东西、不需要连中台，所以沙箱里的、云端的 Agent 也能接。
+代码块可有可无。没有 `agent-autoloop` 代码块、最后一个 `json` 代码块里却只有回执字段的，算回执标错了，按下面重写；普通的 `json` 不受影响。Agent 不需要装任何东西、不需要连中台，所以沙箱里的、云端的 Agent 也能接。
 
 回执写错不重做业务：接单程序接着原会话，只让它把最后一条消息重写一遍，最多两次；没有会话的 Agent（比如 `command`）不重写，直接走下面这句。还是读不懂，或重写进程启动失败、报错、超时、没有输出，就保留原业务消息第一行的结局，回执作废，推一张卡片告诉你原文在哪（每一轮的输出在这一轮结束后留 14 天）；补回执失败不会把已完成的业务变成自动重试。
 
@@ -268,16 +294,51 @@ GET /v1/cards/next?wait=50    Authorization: Bearer <通道的密钥>
 
 ```
 GET  /v1/state              Authorization: Bearer <本人的密钥>
-→ 200 { "totals", "cards", "recentCards", "agents", "channels", "sources", "lines", "elsewhere", "runs", "nextBefore", "hasMore", "unrouted", "spending", "now", "timezone" }
+→ 200 { "seq", "totals", "cards", "recentCards", "agents", "channels", "sources", "lines", "elsewhere", "runs", "nextBefore", "hasMore", "unrouted", "spending", "timers", "now", "timezone" }
 
 POST /v1/cards/56/answer    { "choice": 1 } 或 { "text": "别的想法" }
 POST /v1/cards/56/resolve   { "reason": "不用决定了，因为……" }
 POST /v1/runs/12/cancel     {}
 ```
 
-`agent-autoloop status`、`answer`、`resolve`、`stop` 就是这几个请求。`/v1/state` 一次给最近 60 轮，`?before=<nextBefore>` 翻更早的。
+`agent-autoloop status`、`answer`、`resolve`、`stop` 就是这几个请求。
+
+整份状态在同一个快照里读出，`seq` 是那时的日志序号：自己做看板的，先取状态，再从 `GET /v1/stream?after=<seq>` 接着读，不漏也不重。`cards`、`recentCards` 在这里多带两项：`lane` 是卡片所在的事项（写了 `parallel` 的规则是事件的对象，别的规则是空字符串），`about` 是提问时留给接着干的那一轮的说明。通道和卡片页拿不到这两项。旧客户端忽略这些字段即可。
+
+### 暂停、恢复、立即运行
+
+```
+POST /v1/rules/巡检/pause      { "reason": "上游在修", "until": "2026-11-07T09:00:00+08:00" }   两项都可以不写
+→ 200 { "changed": true, "rule": "巡检", "paused": { "by": "owner", "reason": "上游在修", "since": "…", "until": "…" } }
+POST /v1/rules/巡检/resume     {}
+→ 200 { "changed": true, "rule": "巡检" }
+POST /v1/rules/巡检/run        { "subject": "#12", "reason": "看一眼" }                         两项都可以不写
+→ 200 { "event": 88, "run": 41 }
+```
+
+只接受本人的密钥。规则名按 URL 编码放进路径，请求体可以为空；不认识的字段返回 400。没有这条规则返回 404 `没有这条规则：<名字>`；`elsewhere` 里的任务返回 400，因为中台不启动它。
+
+暂停和恢复是日志里的事实（种类 `pauseRule`、`resumeRule`），不改 `rules.json`；重启、从日志重建投影后照样有效。`by` 是所用本人密钥的名字。重复暂停只更新原因和 `until`，`since` 保留第一次的时间；原因和 `until` 都没变时 `changed` 为 false，也不追加事实。`until` 要带时区、晚于现在；到了这个时间中台自动恢复，记一条 `tick` 事实。
+
+规则暂停中被移出 `rules.json` 也照样能恢复。
+
+暂停期间：
+
+- **定时规则**：到点直接跳过，不记事件，不积压。`lines[].skippedAt` 是最近一次跳过的时刻。恢复（手动或到了 `until`）后不补跑暂停期间错过的时刻，从恢复的那一刻起的下一个时刻照常跑；中台在暂停期间睡着了也一样。
+- **事件规则**：事件照常记下，但这条规则不接、不派活；恢复后也不补接。事件的 `paused` 记着因为暂停没接它的规则，`/v1/events` 的应答多一个 `paused` 列表，`routed` 只列真正接了的规则。最近 20 条这样的事件在 `/v1/state` 的 `skipped` 里。这类事件不算“没有规则接的事件”。同一事件匹配的其他规则照常接。不补接是因为暂停常常是因为下游坏了或者要止损，事后一次性涌进来的活比漏掉的更难收拾；需要时用立即运行补一轮。
+- **已经排队的、等重试的、暂停期间收到回答或到期复查的这一轮**：留在队列里不派出去，恢复后照常领取，不丢回答。已经在跑的这一轮不受影响，要停用 `stop`。
+
+立即运行走正常派活：记一条 `run.manual` 事件（定时规则的来源是 `schedule`，事件规则用它的 `when.source`），`summary` 是“<密钥名> 手动运行”，`detail` 是 `reason`；`subject` 决定 `parallel` 规则的事项。同一事项已经有排队的一轮时并进那一轮，并取消它的重试等待。这一轮的 `runs[].manual` 为 true。**暂停中的规则不能立即运行**，返回 409 `规则「…」暂停中，先恢复再手动运行`：暂停的意思是这条规则一件活都不派，手动运行也不例外，这样“暂停了就不会再花钱、不会再对外动作”这一条没有例外。要试跑就先恢复再运行。
+
+`/v1/state` 里每条规则（`lines[]`）多了 `paused`（生效中的暂停：`by`、`reason`、`since`、`until`，没暂停是 `null`）和 `skippedAt`；顶层多了 `pauses`（所有生效中的暂停，每项带规则名 `name`）和 `skipped`。旧客户端忽略这些字段即可。
+
+命令行：`agent-autoloop pause <规则> [--reason 原因] [--until 时间]`、`resume <规则>`、`run <规则> [--subject 对象] [--reason 说明]`；`status` 列出暂停中的规则。
+
+`agent-autoloop check [文件]` 只读文件、校验规则，不打开中台数据库，也不把文件载入中台；不写文件名就查 `rules.json`。可以先校验一份草稿再换上去。`/v1/state` 一次给最近 60 轮，`?before=<nextBefore>` 翻更早的。
 
 `/v1/state` 的 `spending.today`、`spending.week` 独立于分页，按规则时区的今天和过去 7 × 24 小时的完成时间汇总。每项含 `rounds`、`tokens`、`cost`、`missingTokens`、`missingCost`，后两项是没报对应用量的轮数；从未开始就取消的轮次不计入。
+
+首页还会返回尚未到期的 `timers`，每项包含 `rule`、`lane`、`key`、`about` 和 `at`；翻历史页时该字段为空。本人客户端可据此区分正常等待复查与已经没有后续动作的事项。
 
 安装与卸载不改变 HTTP 协议。`agent-autoloop --version` 显示版本与提交；`agent-autoloop uninstall` 确认后移除自身程序、链接和服务，始终保留规则、密钥和记录；`--yes` 只跳过确认。
 
@@ -306,6 +367,8 @@ POST /v1/runs/12/cancel     {}
 | 提问之后问题自己好了                     | 后面的 Agent 核实后在 `resolve` 里结掉，卡片自动改成“不用决定了”                                                                                                                                                                    |
 | 规则写错了                               | 旧规则继续跑，告诉你错在哪                                                                                                                                                                                                          |
 | 规则删掉或改名了                         | 还没领走的和之后没跑成的这一轮记为 `cancelled`，不再派发，发一张通知卡片；已经在跑的跑完照常收结果                                                                                                                                  |
+| 规则暂停了                               | 到点跳过、事件不接，都不积压；排队的留着；恢复后不补跑，从下一个时刻照常跑                                                                                                                                                          |
+| 暂停写了 `until`，中台到点时没开着       | 醒来就恢复，暂停期间的时刻不补                                                                                                                                                                                                      |
 | 规则文件被删、移走或读不到               | 旧规则继续跑，告诉你一次；放回去就接着用。从没载入过规则的新中台读不到就不启动                                                                                                                                                      |
 
 这是“至少一次”的系统：Agent 可能被叫两次，所以 Skill 里有副作用的动作要先核实当前状态。
@@ -314,12 +377,12 @@ POST /v1/runs/12/cancel     {}
 
 | 凭据             | 能做                                                        | 不能做                                 |
 | ---------------- | ----------------------------------------------------------- | -------------------------------------- |
-| 来源的密钥       | 以自己的名义发事件、发消息                                  | 冒充别的来源，领活                     |
+| 来源的密钥       | 以自己的名义发事件、发消息，查自己发的事件后来怎么样了      | 冒充别的来源，看别的来源的事件，领活   |
 | 接单程序的密钥   | 领交给它的活；以交给它的 `elsewhere` 任务的名义发消息、提问 | 碰别人的活，发事件                     |
 | 一轮的 token     | 报告这一轮的这一次执行                                      | 碰别的轮次                             |
 | 通道的密钥       | 领卡片、报告、转达 `answerers` 的回答                       | 其他一切                               |
 | 带权限的卡片链接 | 回答这一张卡片                                              | 其他一切                               |
-| 本人的密钥       | 看全部、回答、结案、停止                                    | 发事件，领活，改规则（规则只在文件里） |
+| 本人的密钥       | 看全部、回答、结案、停止，暂停、恢复、立即运行规则          | 发事件，领活，改规则（规则只在文件里） |
 
 普通访问密钥只保存 SHA-256；本机主密钥另存 `master.key`。接单程序不把中台密钥放进 Agent 的提示词或资料文件，文件系统的访问范围由 Agent 权限决定。
 
@@ -329,7 +392,7 @@ POST /v1/runs/12/cancel     {}
 
 `decide(view, input, now, environment)` 不改传入视图和输入。`evolve(view, facts)` 是唯一的持久投影写入者；时钟、规则文件、随机材料、网络和单一定时器由外壳提供。事实包含版本、序号、时间、种类和规范化记录变更，重放不重新运行规则。视图通过 SQLite 索引按需读取；一次判断只保留本次改动，不复制整表，不在 JavaScript 中常驻全部历史。规则这一行最大、每轮排队都要问，所以一个视图只解析一次；有了新事实就是新视图，不会读到旧规则。日志、投影、日志游标、编号高水位及派生索引一起提交；删掉记录也不复用其编号。正常启动直接打开投影。外壳按决定存储内容的文件（`kernel/evolve.ts`、`kernel/credentials.ts`）和主密钥算格式指纹，别的文件改动不算，查询视图每次启动重新建；旧版没有游标或指纹不匹配时，在同一事务内逐条读取日志、重建投影和索引，不能覆盖期间的新提交，不一次把日志读进内存。首次升级可能需要等待重建；不改旧事实，不需要数据迁移。模拟使用同一套投影和判断实现，数据库放在内存中。
 
-Node 请求转换层保持在 50 行内；文件、SQLite 连接、监听和定时器也由外壳提供。
+Node 请求转换层只把 Node 的请求变成 Request；文件、SQLite 连接、监听和定时器也由外壳提供。
 
 `GET /v1/stream?after=42` 仅接受本人的密钥，返回 SSE：`id` 是日志序号，`event: fact`，`data` 是事实 JSON。断线用 `Last-Event-ID` 或 `after` 从下一条继续；从 0 读全量，按订阅者读取速度逐条发送，不预先缓存全部日志。不给订阅者发送密钥哈希或能力凭据。
 
@@ -365,9 +428,9 @@ Node 请求转换层保持在 50 行内；文件、SQLite 连接、监听和定�
 
 ### 通道模板与命令行示例
 
-Webhook 通道的 `config.json` 配置使用 `use: "webhook"`、`url` 和 `platform`，后者可选 `dingtalk`、`wecom`、`slack`、`discord`。不写 platform 时可用 `body` 自定义模板，字符串里的 `{text}` 替换为卡片内容。四个模板对照官方文档：[钉钉](https://open.dingtalk.com/document/orgapp/custom-bot-send-message-type)、[企微](https://developer.work.weixin.qq.com/document/path/91770)、[Slack](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)、[Discord](https://discord.com/developers/docs/resources/webhook#execute-webhook)。钉钉和企微检查响应的 `errcode`，Slack 检查 `ok`；Discord 禁止文字触发提及。超过企微 2048 字节或 Discord 2000 字的卡片会报告失败，不截断问题或回答链接。Webhook 本身没有幂等保证，消息发送成功但报告丢失时可能重发。
+Webhook 通道的 `config.json` 配置使用 `use: "webhook"`、`url` 和 `platform`，后者可选 `dingtalk`、`wecom`、`slack`、`discord`。不写 platform 时可用 `body` 自定义模板，字符串里的 `{text}` 替换为卡片内容。四个模板对照官方文档：[钉钉](https://open.dingtalk.com/document/orgapp/custom-bot-send-message-type)、[企微](https://developer.work.weixin.qq.com/document/path/91770)、[Slack](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)、[Discord](https://discord.com/developers/docs/resources/webhook#execute-webhook)。企微在标题后显示创建卡片的规则名，把普通网址显示为“打开链接”，把无选项通知的结案地址显示为“点击处理”，不再另列“1. 已处理”；卡片里写的链接标记和尖括号换成全角照字显示，不会被画成链接、标签或提及。钉钉和企微检查响应的 `errcode`，Slack 检查 `ok`；Discord 禁止文字触发提及。超过企微 2048 字节或 Discord 2000 字的卡片会报告失败，不截断问题或回答链接。Webhook 本身没有幂等保证，消息发送成功但报告丢失时可能重发。
 
-桌面通知 `desktop` 是新安装默认打开的通道：macOS 用 `osascript`，Linux 用 `notify-send`。通知标题是“Agent 问你一个问题”，正文是卡片标题和“运行 agent-autoloop status 查看”；文字通过 `--` 后的参数传入，不拼进脚本。没有图形会话时不调用通知程序，报告 `skipped-<卡片编号>`，不反复打扰；卡片仍可通过命令行查看和回答。有图形会话但通知命令不存在或失败时报告 `failed`，由中台安排重试。卡片更新只报告，不重复弹出。
+桌面通知 `desktop` 是新安装默认打开的通道：macOS 用 `osascript`，Linux 用 `notify-send`，Windows 用 PowerShell 的系统托盘通知。通知标题是“Agent 问你一个问题”，正文是卡片标题和“运行 agent-autoloop status 查看”；Unix 的文字通过 `--` 后的参数传入；Windows 把 JSON 数据编码后交给固定脚本解码，不把文字当 PowerShell 执行。没有图形会话时不调用通知程序，报告 `skipped-<卡片编号>`，不反复打扰；卡片仍可通过命令行查看和回答。有图形会话但通知命令不存在或失败时报告 `failed`，由中台安排重试。卡片更新只报告，不重复弹出。
 
 `examples/worker.sh` 和 `examples/channel.sh` 只用 shell 内置命令、curl、jq。设置 `AGENT_AUTOLOOP_URL`、`AGENT_AUTOLOOP_KEY` 后运行；`AGENT_AUTOLOOP_ONCE=1` 只领一次。接单示例交回 `AGENT_AUTOLOOP_RECEIPT` 中的 JSON，默认交回完成；通道示例把卡片输出到终端，再报告送达。它们是短任务示例，不适合长任务；长任务使用 `worker/` 的心跳、停止和恢复。`tests/examples.test.ts` 在通过协议一致性检查的临时中台上实际运行两个脚本，覆盖提问、送达、回答、继续和错误密钥。
 
@@ -382,6 +445,8 @@ Webhook 通道的 `config.json` 配置使用 `use: "webhook"`、`url` 和 `platf
 巡检和飞书摘要的脚本使用本地假 HTTP 和假飞书 CLI 验证，不调用真实业务数据、不发真消息。公开样例不含内部地址、账号或业务记录；用户替换后的资料不应提交到仓库。
 
 ## 结构与实测
+
+主机外壳支持 Windows、macOS、Linux，内核不区分操作系统。Windows 安装用 `install.ps1`，常驻用当前用户登录后的计划任务，由 wscript 隐藏启动，退出 10 秒后重启；每轮由独立 Node 监督进程保存输出和退出码，PowerShell 建立 Job Object 管住后代，接单程序重启后读原有记录继续核对。Windows 数据目录用 ACL；Unix 保留权限模式、登录 shell、进程组和 launchd/systemd。
 
 一条只追加的事实日志是业务状态的来源；视图可重建，重放不重新执行规则。cron、later、重试、租约和离线判断共用到期表，外壳只安排下一次到期的定时器。只有改了东西的输入和到期叫醒的那一次才重算它：什么都没改变的输入（比如被挡下的心跳）不读排队，也不写事实；只随时间变化的部分都有自己的到期时间，定时器到了自然重算。接口是 HTTP + JSON；专用 CLI、MCP、来源、接单程序和通道都使用同一组接口。
 
@@ -451,11 +516,13 @@ Ship 使用本引擎仓库的 `plugins/delivery/action.yml`，项目固定到发
 
 版本号只写在 tag 上（`v1.2.3`），不进任何文件。`agent-autoloop --version` 读当前提交上的 tag，不在发布的提交上就显示“未发布”。
 
-| 这一版里影响最大的改动               | 版本号怎么变              |
-| ------------------------------------ | ------------------------- |
-| 只修问题                             | 第三位加一：1.1.1 → 1.1.2 |
-| 加新能力或改默认行为，老用法照样能跑 | 第二位加一：1.1.1 → 1.2.0 |
-| 老用法不改就跑不了                   | 第一位加一：1.1.1 → 2.0.0 |
+| 这一版                                 | 版本号怎么变              |
+| -------------------------------------- | ------------------------- |
+| 老用法不改就跑不了                     | 第一位加一：1.8.3 → 2.0.0 |
+| 这一周的第一版（北京时间周一零点起算） | 第二位加一：1.8.3 → 1.9.0 |
+| 同一周里之后的每一版，急修也算         | 第三位加一：1.8.3 → 1.8.4 |
+
+从上往下看，先对上哪条就按哪条加。第二位、第三位只说明这是哪一周的第几版，新能力和修复都可能在里面；能不能放心升只看第一位：第一位没变，老用法就照样能跑。周一零点刚过发的急修，也算这一周的第一版。
 
 老用法指这些：
 
@@ -466,8 +533,8 @@ Ship 使用本引擎仓库的 `plugins/delivery/action.yml`，项目固定到发
 - 交付约定（`ops/delivery.json`、四个标签、`delivery` 状态）；
 - 旧版本留下的数据，新版本能接着用。
 
-内部代码、文档没写的字段和提示文字不算。新增字段不算破坏，所以插件和客户端要忽略不认识的字段。要去掉一个东西，先标记废弃并发一个第二位版本，到下一个第一位版本才真删。
+内部代码、文档没写的字段和提示文字不算。新增字段不算破坏，所以插件和客户端要忽略不认识的字段。要去掉一个东西，先在一版里标成废弃、写进发布说明，到下一个第一位版本才真删。
 
 `/v1` 单独算：只有 HTTP 接口不兼容时才变，软件到 2.0 不等于协议到 `/v2`。发出去的版本不再改，有问题就发下一个号。
 
-一批改动做完当天发；崩溃、丢数据、安全问题、装不上的修复当天发；其余的每周二发。只改文档、测试、CI 的不发。大改动可以先发试用版（`v1.2.0-rc.1`），安装和 `update` 不会装到它。
+常规改动一天最多发一版；崩溃、丢数据、安全问题、装不上的修复随时发。只改文档、测试、CI 的不发。大改动可以先发试用版（`v1.2.0-rc.1`），安装和 `update` 不会装到它。

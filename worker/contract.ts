@@ -9,15 +9,30 @@ import { parseResult, type Result } from "../protocol/validate.ts";
 const FAILED = ["没跑成", "FAILED"];
 const NOTHING = ["没事可做", "NOTHING"];
 const RECEIPT_FIELDS = ["ask", "notice", "resolve", "later", "events"];
-const BLOCK = /```agent-autoloop[ \t]*\r?\n([\s\S]*?)```/g;
+// A fence closes only on a line of its own. A JSON string can't hold a raw newline, so a ``` inside one, as in an issue
+// body carried in an event's detail, is never the end of the block.
+const BLOCK = /(?<=^|\n)[ \t]*```agent-autoloop[ \t]*\r?\n((?:[^\n]*\n)*?)[ \t]*```[ \t]*(?=\r?\n|$)/g;
+const JSON_BLOCK = /(?<=^|\n)[ \t]*```json[ \t]*\r?\n((?:[^\n]*\n)*?)[ \t]*```[ \t]*(?=\r?\n|$)/g;
+const OPENED = /(?<=^|\n)[ \t]*```agent-autoloop[ \t]*\r?\n/;
 const unique = <T>(items: T[]) => [...new Set(items)];
+
+/** The last receipt block in what an Agent said, as it wrote it, for a run keeping one its last turn left out. */
+export function receiptBlock(said: string): string | undefined {
+  return [...said.matchAll(BLOCK)].at(-1)?.[0];
+}
 
 function describeEvent({ sourceName, type, subject, link }: Job["context"]["events"][number]) {
   return `- ${`${sourceName} ${type} ${subject}`.trim()}${link ? `（${link}）` : ""}`;
 }
 
 export function promptFor(job: Job, contextFile: string) {
-  const { rule, context, askFirst } = job;
+  const { rule, context, askFirst, session } = job;
+  // A session carried on has the skill it read before in its history, and goes by that copy unless told it may be stale.
+  const skill = !rule.skill
+    ? ""
+    : session
+      ? `重新加载 Skill ${rule.skill}：它可能改过，照现在的版本做。`
+      : `加载 Skill ${rule.skill}。`;
   const happened = unique(context.events.map(describeEvent));
   const emits = rule.emits
     ? `,\n "events":[{"id":"这件事的固定编号","type":"${rule.emits.types.join(" 或 ")}",` +
@@ -27,7 +42,7 @@ export function promptFor(job: Job, contextFile: string) {
     `Agent 自动化中台按规则「${rule.name}」把这件活派给你。发生了：`,
     ...(happened.length ? happened : ["- 定时到了"]),
     "",
-    [rule.skill ? `加载 Skill ${rule.skill}。` : "", rule.prompt ?? ""].join("").trim(),
+    [skill, rule.prompt ?? ""].join("").trim(),
     "",
     `这一轮的资料在 ${contextFile}：events 是事件的详情，answers 是人对你之前的问题的回答，` +
       "timers 是这一轮到期的复查，waiting 是这件事还没到期的复查，open 是同一组还没收尾的卡片，" +
@@ -105,7 +120,29 @@ export function readMessage(said: string): Message {
   if (failed) message = { outcome: "failed", error: rest(failed) || "没说原因" };
   else if (nothing) message = { outcome: "nothing", summary: rest(nothing) };
   const block = blocks.at(-1)?.[1];
-  if (block === undefined) return message;
+  if (block === undefined && OPENED.test(said)) {
+    return { ...message, problem: "回执的代码块没有结尾：结尾的 ``` 要单独占一行" };
+  }
+  if (block === undefined) {
+    const candidate = [...said.matchAll(JSON_BLOCK)].at(-1)?.[1];
+    if (candidate !== undefined) {
+      try {
+        const value = JSON.parse(candidate);
+        const keys = value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
+        if (
+          value &&
+          typeof value === "object" &&
+          !Array.isArray(value) &&
+          keys.length > 0 &&
+          keys.every((key) => RECEIPT_FIELDS.includes(key))
+        )
+          return { ...message, problem: "疑似回执的 JSON 代码块必须标记为 agent-autoloop" };
+      } catch {
+        // Unrelated JSON remains ordinary output.
+      }
+    }
+    return message;
+  }
   let receipt: unknown;
   try {
     receipt = JSON.parse(block);

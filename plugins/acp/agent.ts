@@ -1,9 +1,10 @@
 import { join } from "node:path";
+import { stablePath } from "../../host/node-path.ts";
 import { tail, type Adapter, type Reading } from "../../worker/agents.ts";
 
 export default {
   command: (turn) => [
-    process.execPath,
+    stablePath(process.execPath),
     "--disable-warning=ExperimentalWarning",
     join(import.meta.dirname, "bridge.ts"),
     JSON.stringify(turn),

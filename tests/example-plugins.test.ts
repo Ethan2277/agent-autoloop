@@ -1,6 +1,7 @@
 // Failure modes: an example imports something that only exists in this repository, so it loads here and breaks once
 // `agent-autoloop add` has put it elsewhere; add leaves the entry where the loader doesn't look; hello-agent's read throws on
-// output it doesn't expect (a throw stops the worker) or loses the session; hello-channel writes a card but never reports
+// output it doesn't expect (a throw stops the worker) or loses the session, or never says a turn it went on in started, so
+// a resumed turn that broke is run again from scratch in a new session and does its work twice; hello-channel writes a card but never reports
 // it, so the hub sends it again every minute; hello-source takes a wrong or missing signature, or gives an event the hub
 // refuses; an example drifts from the engine's types; a command in the tutorial doesn't run as written; add takes a
 // repository whose name can't be a plugin name without saying which name it worked out and turned down.
@@ -79,6 +80,23 @@ test("hello-agent: starts a session or goes on in one, and reads any output with
   assert.ok(helloAgent.read("not json", 0, "").error);
   assert.equal(helloAgent.read("", 2, "boom").error, "boom");
   assert.ok(helloAgent.read("", 2, "").error);
+});
+
+test("hello-agent: a turn that took the prompt says so, so a resumed one that broke isn't run from scratch", () => {
+  const argv = helloAgent.command({ ...turn, resume: "old-id" });
+  const printed = spawnSync(argv[0], argv.slice(1), { encoding: "utf8" }).stdout;
+  const took = printed.split("\n").find((line) => line.trim())!;
+  // What the worker reads while it's still going, or once it was killed: the session it went on in, and that it has the
+  // prompt. Read as never having started, a retry opens a new session and the work is done a second time.
+  assert.deepEqual(helloAgent.read(took, null, ""), { session: "old-id", started: true }, "still going");
+  assert.equal(helloAgent.read(took, 137, "").started, true, "killed after it got going");
+  assert.equal(helloAgent.read(took, 137, "").session, "old-id", "so the retry goes on in the same session");
+  // Its answer is the last line, and having taken the prompt is still part of what it says.
+  assert.deepEqual(helloAgent.read(printed, 0, ""), {
+    session: "old-id",
+    started: true,
+    text: "收到了 4 字的提示词，权限 edit。这是 hello-agent，什么也没做。",
+  });
 });
 
 test("hello-channel: writes a new card, reports it, and leaves a card it has already written alone", async () => {

@@ -18,6 +18,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -170,7 +171,8 @@ test("at a terminal only confirming removes the program, and every answer preser
 
 test("installing the service again brings back a Skill link that uninstalling took away", () => {
   const it = install();
-  rmSync(skillLink(it));
+  // Not rmSync: on Node 25.1 it refuses to remove a link that leads to a folder.
+  unlinkSync(skillLink(it));
   // The stand-in service manager refuses; the link comes first.
   it.run(["service", "install"]);
   assert.ok(lstatSync(skillLink(it)).isSymbolicLink());

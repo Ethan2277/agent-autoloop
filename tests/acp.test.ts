@@ -384,7 +384,8 @@ test("ACP doesn't take a link that goes nowhere for a new file in the folder", (
     assert.equal(edit(join(work, path)), "no", path);
     assert.equal(edit(`${work}/${path}`), "no", `${path}, not normalised`);
   }
-  assert.equal(edit(`${work}/dangling/../inside.txt`), "no", "the path goes through it");
+  // Win32 normalizes .. before traversing the filesystem; POSIX traverses the dangling link first.
+  assert.equal(edit(`${work}/dangling/../inside.txt`), process.platform === "win32" ? "once" : "no");
   assert.equal(edit(join(work, "real", "new-file.txt")), "once", "a new file is still fine");
   assert.equal(edit(join(work, "new-folder", "new-file.txt")), "once", "in a new folder too");
   assert.equal(edit(join(work, "dangling"), "full"), "once", "full doesn't look at paths");

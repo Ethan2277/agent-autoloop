@@ -9,19 +9,20 @@ import { cronOf, eventRule, SCHEDULE, type Rules } from "../kernel/rules.ts";
 
 /** The columns of the read-only SQL views over the projections, which the queries here read. */
 const VIEWS = {
-  events: "id source key type subject summary detail link routed received_at",
+  events: "id source key type subject summary detail link routed paused received_at",
   runs:
     "id rule agent grp lane state attempts not_before claim last_result cancel_at resume session link created_at " +
-    "claimed_at seen_at finished_at summary error usage",
+    "claimed_at seen_at finished_at manual summary error usage",
   run_events: "run_id event_id",
   cards:
     "id key kind title text options recommend about state fyi quiet choice answer by result rule lane grp source " +
     "agent session run_id answer_event version created_at decided_at closed_at",
   deliveries: "card_id channel version ref tries first_try_at not_before error given_up",
   timers: "id rule lane key source session about at event_id created_at",
-  schedules: "rule cron next_at",
+  schedules: "rule cron next_at skipped_at",
   seen: "kind name seen_at",
   keys: "kind name hash created_at",
+  pauses: "name by reason since until",
 };
 
 /** Made anew at every start, so changing them takes no rebuild and no migration. */
@@ -84,6 +85,11 @@ function tally(counted: Row[]) {
   };
 }
 
+// Events a pause kept from a rule: only those carry the field. A range on it, and +id, keep to that index instead of
+// walking every event by id.
+const SKIPPED = `SELECT id, source, type, subject, summary, paused, received_at FROM events
+  WHERE paused > '' ORDER BY +id DESC LIMIT 20`;
+
 export function stateOf(now: number, before: number | undefined, rules: Rules, { all, view, unrouted }: Reads) {
   const seen = new Map(
     all<Row>("SELECT kind, name, seen_at FROM seen").map((row) => [`${row.kind}:${row.name}`, row.seen_at as string]),
@@ -95,6 +101,9 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
   const counts = all<Row>(COUNTS, [iso(dayStart(now, rules.timezone))]);
   const openCards = all<Row>("SELECT * FROM cards WHERE state = 'open' ORDER BY id DESC");
   const recentCards = all<Row>("SELECT * FROM cards WHERE state <> 'open' ORDER BY id DESC LIMIT 20");
+  const timers = before
+    ? []
+    : all<Row>("SELECT rule, lane, key, about, at FROM timers WHERE event_id IS NULL ORDER BY at");
   const older = before ? "WHERE id < ?" : "";
   const page = all<Row>(
     `SELECT * FROM runs ${older} ORDER BY id DESC LIMIT ?`,
@@ -104,13 +113,26 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
   const hasMore = page.length > PAGE;
   const byId = new Map([...page.slice(0, PAGE), ...active].map((run) => [run.id, run]));
   const visible = [...byId.values()].sort((a, b) => b.id - a.id);
+  // A pause past its end is lifted at the next tick; until then it already doesn't hold.
+  const pauses = all<Row>("SELECT name, by, reason, since, until FROM pauses ORDER BY name").filter(
+    (pause) => pause.until === null || Date.parse(pause.until) > now,
+  );
+  const pauseOf = (rule: Rules["rules"][number]) => {
+    const pause = pauses.find((p) => p.name === rule.name);
+    return pause ? { by: pause.by, reason: pause.reason, since: pause.since, until: pause.until } : null;
+  };
+  const skippedAt = new Map(
+    all<Row>("SELECT rule, skipped_at FROM schedules").map((row) => [row.rule, row.skipped_at]),
+  );
   return {
     now: iso(now),
     timezone: rules.timezone,
     spending: spendingOf(all, now, rules.timezone),
     totals: { ...tally(counts), attention: openCards.length },
-    cards: openCards.map((card) => view(card)),
-    recentCards: recentCards.map((card) => view(card)),
+    // The owner's own: which matter a card is about, and what its asker left for whoever carries on. Channels don't get them.
+    cards: openCards.map((card) => ({ ...view(card), lane: card.lane, about: card.about })),
+    recentCards: recentCards.map((card) => ({ ...view(card), lane: card.lane, about: card.about })),
+    timers: timers.map(({ rule, lane, key, about, at }) => ({ rule, lane, key, about, at })),
     sources: Object.entries(rules.sources).map(([id, { name }]) => {
       const events = all<Row>("SELECT COUNT(*) AS n FROM events WHERE source = ?", [id])[0].n as number;
       return { id, name, events };
@@ -125,14 +147,22 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
       every: eventRule(rule) ? null : describeCron(cronOf(rule)),
       next: eventRule(rule) ? null : iso(nextRun(parseCron(cronOf(rule))!, now, rules.timezone)!),
       totals: tally(counts.filter((row) => row.rule === rule.name)),
+      paused: pauseOf(rule),
+      skippedAt: eventRule(rule) ? null : (skippedAt.get(rule.name) ?? null),
+    })),
+    pauses,
+    skipped: all<Row>(SKIPPED).map(({ paused, received_at: receivedAt, ...event }) => ({
+      ...event,
+      receivedAt,
+      rules: JSON.parse(paused),
     })),
     elsewhere: rules.elsewhere.map(({ name, source, to, cron, where }) => {
       const next = iso(nextRun(parseCron(cron)!, now, rules.timezone) ?? now);
       return { id: name, name, source, agent: to, cron, every: describeCron(cron), next, where };
     }),
-    agents: Object.entries(rules.agents).map(([id, { name, use, worker }]) => {
+    agents: Object.entries(rules.agents).map(([id, { name, use, worker, program }]) => {
       const totals = tally(counts.filter((row) => row.agent === id));
-      return { id, name, use, worker, ...presence(`worker:${worker}`), totals };
+      return { id, name, use, worker, ...(program && { program }), ...presence(`worker:${worker}`), totals };
     }),
     channels: Object.entries(rules.channels).map(([id, { name }]) => ({ id, name, ...presence(`channel:${id}`) })),
     runs: visible.map((run) => ({
@@ -151,6 +181,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
       session: run.session,
       usage: run.usage ? JSON.parse(run.usage) : null,
       stopping: run.cancel_at !== null,
+      manual: Boolean(run.manual),
       events: all<Row>(EVENTS_OF_RUN, [run.id]),
     })),
     hasMore,

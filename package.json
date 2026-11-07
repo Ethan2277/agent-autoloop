@@ -23,7 +23,8 @@
     "test:sim": "node --disable-warning=ExperimentalWarning sim/random.ts 24301 20000",
     "test:deep": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 sim/*.test.ts",
     "test:nightly": "npm run test:deep && node --disable-warning=ExperimentalWarning scripts/benchmark.ts",
-    "benchmark": "node --disable-warning=ExperimentalWarning scripts/benchmark.ts"
+    "benchmark": "node --disable-warning=ExperimentalWarning scripts/benchmark.ts",
+    "test:windows": "node scripts/test-windows.ts"
   },
   "devDependencies": {
     "@types/node": "26.6.4",

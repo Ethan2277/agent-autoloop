@@ -179,7 +179,7 @@ test("one machine, one command: an event, a question, an answer, the work done",
   assert.match(cli("answer", String(card.id), "1").stdout, /已经/);
 
   const status = cli("status");
-  assert.match(status.stdout, /在跑 0 · 排队 0 · 今天做完 2 · 等你 0/);
+  assert.match(status.stdout, /等你 0 · 在跑 0 · 排队 0 · 今天做完 2/);
   assert.match(status.stdout, /你选了绿色，做完了/);
   const told = spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", bin, "tell", "note-1"], {
     env,

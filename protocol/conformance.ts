@@ -28,6 +28,7 @@ export async function conformance(base: string, config: Probe, request: typeof f
   };
   const doors: [string, unknown, string[]][] = [
     ["/v1/events", {}, ["source"]],
+    ["/v1/events/1", undefined, ["source"]],
     ["/v1/tell", {}, ["source", "worker"]],
     ["/v1/work?claim=probe&wait=0", undefined, ["worker"]],
     ["/v1/cards/next?wait=0", undefined, ["channel"]],
@@ -77,6 +78,8 @@ export async function conformance(base: string, config: Probe, request: typeof f
   const duplicate = await call("/v1/events", keys.source, event, 200, "eventAck");
   assert.equal(duplicate.event, accepted.event);
   assert.equal(duplicate.duplicate, true);
+  const sent = await call(`/v1/events/${accepted.event}`, keys.source, undefined, 200, "eventOutcome");
+  assert.deepEqual(sent.routed, accepted.routed);
   const take = () => call(`/v1/work?claim=${tag}&wait=0`, keys.worker, undefined, 200, "work");
   const first = (await take()).job;
   const job = (await take()).job;

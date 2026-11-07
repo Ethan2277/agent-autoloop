@@ -1,10 +1,11 @@
 // The hub on this machine: its database, the view kept from the log, the rules file, and one way to apply an input.
 // Importing this opens them all, which is why the checks that must survive a bad rules file import it late.
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { HOME, RULES_FILE } from "./home.ts";
+import { privateDirectory } from "./files.ts";
 import { stateOf as state, viewStatements } from "./state.ts";
 import { cardHash, digest, whose as keyHolder } from "../kernel/credentials.ts";
 import { decide } from "../kernel/decide.ts";
@@ -14,8 +15,7 @@ import * as query from "../kernel/query.ts";
 import { commitLatest, openView } from "../kernel/store.ts";
 import { parseRules as checkRules, RulesError } from "../protocol/rules.ts";
 
-mkdirSync(HOME, { recursive: true, mode: 0o700 });
-chmodSync(HOME, 0o700);
+privateDirectory(HOME);
 const masterKeyFile = join(HOME, "master.key");
 if (!existsSync(masterKeyFile)) {
   writeFileSync(masterKeyFile, randomBytes(32).toString("base64url"), { mode: 0o600, flag: "wx" });
@@ -147,8 +147,16 @@ export function cardByToken(token: string) {
 export const view = (card: Row, ref: string | null = null, links = false) =>
   query.cardView(card, environment, ref, links);
 export const unrouted = (limit = 20) => query.unrouted(getView(), limit);
-export const stateOf = (now = Date.now(), before?: number) =>
-  state(now, before, query.configuration(getView()), { all, view, unrouted });
+/** Read in one snapshot: its seq is where the log stood for all of it, for a client to go on in /v1/stream from. */
+export function stateOf(now = Date.now(), before?: number) {
+  db.exec("BEGIN");
+  try {
+    const latest = getView();
+    return { seq: latest.seq, ...state(now, before, query.configuration(latest), { all, view, unrouted }) };
+  } finally {
+    db.exec("COMMIT");
+  }
+}
 
 export type KeyKind = "source" | "worker" | "channel" | "owner";
 export const keepKeyHash = (kind: KeyKind, name: string, hash: string, now = Date.now()) =>

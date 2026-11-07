@@ -1,4 +1,4 @@
-// The cost line in `agent-autoloop status`, from /v1/state's completion-time totals. Agents report usage for themselves, or
+// The cost lines in `agent-autoloop status`, from /v1/state's completion-time totals. Agents report usage for themselves, or
 // don't: a plain command says nothing, and some give tokens but no price. So every figure says how many rounds it leaves out.
 import type { Spending } from "../host/state.ts";
 const count = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
@@ -16,6 +16,7 @@ function tally(label: string, { rounds, tokens, cost, missingTokens, missingCost
   return `${label} ${rounds} 轮 · ${shownTokens} · ${shownCost}`;
 }
 
-export function spendLine(spending: { today: Spending; week: Spending }) {
-  return `${tally("今天", spending.today)}    ${tally("最近 7 天", spending.week)}`;
+/** Two lines, labels padded to the same terminal width so the figures line up. */
+export function spendLines(spending: { today: Spending; week: Spending }) {
+  return [tally("今天     ", spending.today), tally("最近 7 天", spending.week)];
 }

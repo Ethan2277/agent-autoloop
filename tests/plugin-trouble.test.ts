@@ -10,7 +10,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
 
@@ -54,7 +54,7 @@ async function install(plugins: Record<string, string> = {}) {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     AGENT_AUTOLOOP_HOME: home,
-    PATH: `${notifiers}:${process.env.PATH}`,
+    PATH: `${notifiers}${delimiter}${process.env.PATH}`,
   };
   delete env.AGENT_AUTOLOOP_RULES;
   delete env.AGENT_AUTOLOOP_PUBLIC_URL;
@@ -112,9 +112,10 @@ async function until(done: () => boolean | Promise<boolean>, what: string, patie
 const alive = (child: ChildProcess) => child.exitCode === null && child.signalCode === null;
 
 test("an agent plugin that can't read what it printed fails that run, and the hub stays up", async () => {
+  // Node itself prints, so the program really runs everywhere: there's no /bin/echo on Windows.
   const it = await install({
     "unreadable/agent.ts": `export default {
-      command: () => ["/bin/echo", "ok"],
+      command: () => [${JSON.stringify(process.execPath)}, "-e", "console.log('ok')"],
       read() { throw new Error("no idea what this says"); },
     };`,
   });

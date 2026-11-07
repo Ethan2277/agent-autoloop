@@ -1,7 +1,7 @@
 // Failure modes: empty/failed reviews pass; findings are unhandled but attested; Codex reads developer
 // config or memories, writes files, sees credentials, or executes a PR's programs/settings. Review receives a text snapshot;
 // what an octopus merge brings never reaches the reviewer, so it passes unseen; Git escapes a Chinese path so it matches no
-// pattern; a root file named like a commit is taken for one and the review can't finish.
+// pattern; a root file named like a commit is taken for one and the review can't finish; a Windows npm shim cannot start the reviewer.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseReview, codexCommand, reviewSnapshot } from "../plugins/delivery/review.ts";
@@ -49,10 +49,12 @@ test("review uses main's points and a text-only snapshot; ordinary internal docs
       reviewer,
       `import fs from 'node:fs';let input='';for await(const b of process.stdin)input+=b;if(!input.includes('main-points'))process.exit(1);fs.writeFileSync(${JSON.stringify(called)},'yes');console.log('{"findings":[]}');`,
     );
+    const shim = join(root, "reviewer.cmd");
+    if (process.platform === "win32") writeFileSync(shim, '@ECHO off\r\nnode "%~dp0reviewer.mjs" %*\r\n');
     const s = settings({
       repo: "example/app",
       internal: ["docs/*.md"],
-      review: { points: "AGENTS.md", command: [process.execPath, reviewer] },
+      review: { points: "AGENTS.md", command: process.platform === "win32" ? [shim] : [process.execPath, reviewer] },
     });
     writeFileSync(join(repo, "docs/a.md"), "docs");
     const docs = commit();

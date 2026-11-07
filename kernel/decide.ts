@@ -12,6 +12,8 @@ import {
   eventsOf,
   jobOf,
   openInScope,
+  pauseOf,
+  routingOf,
   sourceOf,
   waitingOn,
   workerOf,
@@ -186,10 +188,18 @@ function enqueue(draft: Draft, rule: Rule, event: number, lane: string, resume?:
     add(draft, "runs", { rule: rule.name, agent: rule.to, grp: rule.group, lane, state: "queued", ...stamps });
   put(draft, "run_events", `${run.id}:${event}`, { run_id: run.id, event_id: event });
   if (resume) put(draft, "runs", run.id, { resume });
+  return run.id as number;
 }
 
 /** Keeps an event under a key of its own: one the hub makes up mustn't collide with one a source sent. */
-function recordEvent(draft: Draft, source: string, event: Row, routed: string[]): number {
+function recordEvent(
+  draft: Draft,
+  source: string,
+  event: Row,
+  routed: string[],
+  paused: string[] = [],
+  sent = false,
+): number {
   let key = event.id;
   for (let suffix = 1; rows(draft.view, "events", { source, key }).length; suffix++) {
     key = `${event.id}:${suffix}`;
@@ -204,26 +214,42 @@ function recordEvent(draft: Draft, source: string, event: Row, routed: string[])
     link: event.link ?? "",
     hops: event.hops ?? 0,
     routed: JSON.stringify(routed),
+    // Only where a pause held it back, so the owner's list of what was skipped reads an index of those alone.
+    ...(paused.length && { paused: JSON.stringify(paused) }),
+    // Through the source's own door: only these are its to read back (`eventOutcome`), not what the hub made in its name.
+    ...(sent && { sent: 1 }),
     received_at: draft.at,
   }).id;
 }
 
-function ingest(draft: Draft, source: string, given: unknown) {
+function ingest(draft: Draft, source: string, given: unknown, sent = false) {
   const event = parseEvent(given);
   const existing = rows(draft.view, "events", { source, key: event.id })[0];
-  if (existing) return { event: existing.id, duplicate: true, routed: JSON.parse(existing.routed) };
+  if (existing) {
+    return { event: existing.id, duplicate: true, ...routingOf(existing) };
+  }
   const tooDeep = event.hops > MAX_HOPS;
   const takes = (rule: Rule) =>
     eventRule(rule) && rule.when.source === source && typeMatches(rule.when.types, event.type);
   const matched = tooDeep ? [] : draft.rules.rules.filter(takes);
-  const routed = matched.map((rule) => rule.name);
-  const id = recordEvent(draft, source, event, routed);
+  // A paused rule doesn't take the event, and nothing is kept back for it: the event is recorded as skipped for it.
+  const isPaused = (rule: Rule) => !!pauseOf(draft.view, rule, draft.now);
+  const paused = matched.filter(isPaused).map((rule) => rule.name);
+  const taking = matched.filter((rule) => !isPaused(rule));
+  const id = recordEvent(
+    draft,
+    source,
+    event,
+    matched.map((rule) => rule.name),
+    paused,
+    sent,
+  );
   if (tooDeep) {
     const words = `同一条处理链已超过 ${MAX_HOPS} 层，后续事件已记录，没有继续派发。`;
     notify(draft, `hops:${source}:${event.id}`, "事件循环已停止", words, { once: true });
   }
-  for (const rule of matched) enqueue(draft, rule, id, rule.parallel ? event.subject : "");
-  return { event: id, duplicate: false, routed };
+  for (const rule of taking) enqueue(draft, rule, id, rule.parallel ? event.subject : "");
+  return { event: id, duplicate: false, routed: taking.map((rule) => rule.name), paused };
 }
 
 function heldRun(draft: Draft, id: number, token: string, states: string[]) {
@@ -281,10 +307,16 @@ function claimNext(draft: Draft, worker: string, claim: string) {
   const runs = rows(draft.view, "runs", { state: ["queued", "claimed"] });
   const claimed = runs.filter((run) => run.state === "claimed");
   const groupLimit = (group: string) => draft.rules.rules.find((rule) => rule.group === group)?.parallel ?? 1;
+  // What was queued before a pause, or an answer that came in during one, waits for the resume.
+  const unpaused = (name: string) => {
+    const rule = ruleNamed(draft, name);
+    return !!rule && !pauseOf(draft.view, rule, draft.now);
+  };
   const claimable = (run: Row) =>
     run.state === "queued" &&
     agents.includes(ruleNamed(draft, run.rule)?.to ?? "") &&
     Date.parse(run.not_before) <= draft.now &&
+    unpaused(run.rule) &&
     !claimed.some((other) => other.grp === run.grp && other.lane === run.lane) &&
     claimed.filter((other) => other.grp === run.grp).length < groupLimit(run.grp);
   // The same claim again means the answer got lost: it gets back the run it already has.
@@ -399,11 +431,16 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
     notify(draft, `run:${id}:done`, run.rule, summary, once);
   }
   for (const later of result.later ?? []) scheduleReview(draft, run, later);
+  const emitted: number[] = [];
   for (const event of result.events ?? []) {
     if (rule?.emits && typeMatches(rule.emits.types, event.type)) {
-      ingest(draft, rule.emits.source, { ...event, hops: hopsOf(draft, run) + 1 });
+      const sent = ingest(draft, rule.emits.source, { ...event, hops: hopsOf(draft, run) + 1 });
+      // A number already taken is an earlier event's, perhaps another source's: what it says isn't what this receipt sent.
+      if (!sent.duplicate) emitted.push(sent.event);
     } else rejected.push({ what: "events", reason: `规则「${run.rule}」没有写可以发 ${event.type}` });
   }
+  // The source whose event this run took reads them back (`eventOutcome`); nothing else links them to the run.
+  if (emitted.length) put(draft, "runs", id, { emitted: JSON.stringify(emitted) });
   return rejected;
 }
 
@@ -510,6 +547,11 @@ function nextCard(draft: Draft, channel: string) {
 function tick(draft: Draft) {
   const { now } = draft;
   const { rules, timezone } = draft.rules;
+  for (const pause of rows(draft.view, "pauses")) {
+    if (pause.until === null || Date.parse(pause.until) > now) continue;
+    set(draft, "pauses", pause.name, null);
+    reopen(draft, pause.name, Date.parse(pause.until));
+  }
   for (const rule of rules) {
     if (eventRule(rule)) continue;
     const text = cronOf(rule);
@@ -521,7 +563,13 @@ function tick(draft: Draft) {
       continue;
     }
     if (now < Date.parse(schedule.next_at)) continue;
-    const key = `${rule.name}@${iso(latestBefore(cron, Date.parse(schedule.next_at), now, timezone))}`;
+    const slot = iso(latestBefore(cron, Date.parse(schedule.next_at), now, timezone));
+    // Paused, the moment passes without a run, and the next one is the next one: a resume owes nothing.
+    if (pauseOf(draft.view, rule, now)) {
+      put(draft, "schedules", rule.name, { next_at: nextAt(), skipped_at: slot });
+      continue;
+    }
+    const key = `${rule.name}@${slot}`;
     if (!rows(draft.view, "events", { source: SCHEDULE, key }).length) {
       enqueue(draft, rule, recordEvent(draft, SCHEDULE, { id: key, type: "schedule.tick" }, [rule.name]), "");
     }
@@ -537,6 +585,84 @@ function tick(draft: Draft) {
   }
   sweep(draft);
 }
+
+/** A schedule whose next moment passed while paused starts again at the first moment from `from`, not with a backlog. */
+function reopen(draft: Draft, name: string, from: number) {
+  const rule = draft.rules.rules.find((rule) => rule.name === name);
+  if (!rule || eventRule(rule)) return;
+  const schedule = draft.view.get("schedules", rule.name);
+  if (!schedule || Date.parse(schedule.next_at) >= from) return;
+  const next = nextRun(parseCron(cronOf(rule))!, from - 1, draft.rules.timezone);
+  put(draft, "schedules", rule.name, { next_at: iso(next!) });
+}
+
+function knownRule(draft: Draft, name: string) {
+  // Not ruleNamed: a task elsewhere that can ask goes on like a rule, but the hub neither starts nor holds it.
+  const rule = draft.rules.rules.find((rule) => rule.name === name);
+  if (rule) return rule;
+  if (draft.rules.elsewhere.some((task) => task.name === name)) {
+    throw new InputError(`「${name}」是在别处跑的定时任务，中台不启动它，也就停不了、跑不了`);
+  }
+  throw new NotFound(`没有这条规则：${name}`);
+}
+
+const PAUSE_REASON = 500;
+function pauseFields(draft: Draft, given: Row) {
+  const { reason = "", until = null } = given ?? {};
+  if (typeof reason !== "string" || [...reason].length > PAUSE_REASON) {
+    throw new InputError(`暂停原因要是 ${PAUSE_REASON} 字以内的文字`);
+  }
+  const ends = typeof until === "string" && /(Z|[+-]\d\d:\d\d)$/.test(until) ? Date.parse(until) : NaN;
+  if (until !== null && !(ends > draft.now)) throw new InputError("until 要是带时区、晚于现在的 ISO 时间");
+  return { reason: reason.trim(), until: until === null ? null : iso(ends) };
+}
+
+const pauseView = ({ by, reason, since, until }: Row) => ({ by, reason, since, until });
+
+/** Owner actions on one rule. They are facts in the log, not edits to rules.json. */
+const CONTROL = {
+  pauseRule(draft: Draft, name: string, by: string, given: Row) {
+    knownRule(draft, name);
+    const fields = pauseFields(draft, given);
+    const existing = draft.view.get("pauses", name);
+    const same = existing && existing.reason === fields.reason && existing.until === fields.until;
+    if (!same) put(draft, "pauses", name, { name, by, since: existing?.since ?? draft.at, ...fields });
+    return { changed: !same, rule: name, paused: pauseView(draft.view.get("pauses", name)!) };
+  },
+  resumeRule(draft: Draft, name: string) {
+    // A rule taken out of rules.json while paused can still have its pause lifted.
+    if (!draft.view.get("pauses", name)) {
+      knownRule(draft, name);
+      return { changed: false, rule: name };
+    }
+    set(draft, "pauses", name, null);
+    reopen(draft, name, draft.now);
+    return { changed: true, rule: name };
+  },
+  /** One run now, through the usual queue, from an event of its own that says the owner asked for it. */
+  runRule(draft: Draft, name: string, by: string, given: Row) {
+    const rule = knownRule(draft, name);
+    const { subject = "", reason = "" } = given ?? {};
+    if (typeof reason !== "string" || [...reason].length > PAUSE_REASON) {
+      throw new InputError(`说明要是 ${PAUSE_REASON} 字以内的文字`);
+    }
+    if (pauseOf(draft.view, rule, draft.now)) throw new Conflict(`规则「${name}」暂停中，先恢复再手动运行`);
+    const source = eventRule(rule) ? rule.when.source : SCHEDULE;
+    // The same checks as any event: its subject becomes the lane and goes into the prompt.
+    const event = parseEvent({
+      id: `manual:${draft.seq}`,
+      type: "run.manual",
+      subject,
+      summary: `${by} 手动运行`,
+      detail: reason,
+    });
+    const eventId = recordEvent(draft, source, event, [name]);
+    const run = enqueue(draft, rule, eventId, rule.parallel ? subject : "");
+    // Waiting out a retry's backoff wouldn't be now: the owner asking is the go-ahead.
+    put(draft, "runs", run, { manual: 1, not_before: draft.at });
+    return { event: eventId, run };
+  },
+};
 
 /** Every input there is, each with its arguments named. What one returns is what the caller is told. */
 const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
@@ -556,7 +682,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     set(draft, "keys", `${kind}:${name}`, null);
     return true;
   },
-  ingest,
+  ingest: (draft, source, given) => ingest(draft, source, given, true),
   createCard,
   /** A task elsewhere asks you; your answer goes on like a round of a rule, where its cwd says. */
   ask(draft, name, given) {
@@ -647,4 +773,5 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   },
   sweep,
   tick,
+  ...CONTROL,
 };

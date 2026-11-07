@@ -12,6 +12,7 @@ export type Job = {
     effort?: string;
     access: string;
     command?: string[];
+    program?: string;
     timeout?: number;
   };
   session: string | null;

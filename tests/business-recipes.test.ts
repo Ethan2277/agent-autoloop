@@ -1,6 +1,8 @@
 // Failure modes: an HTTP 200 error page or redirect is called healthy; a continuing outage wakes the model or notifies
 // again; recovery closes an unrelated card; Feishu is read as the bot, pages or selected fields are lost, an unrelated
-// report is included, credentials fail but an old snapshot is summarized, or report text leaks into notifications.
+// report is included, credentials fail but an old snapshot is summarized, or report text leaks into notifications. Mail
+// is read as the bot, a sender the user asked to skip still has its body read, a long body is kept whole or cut short of
+// what the reader is told, an empty inbox wakes the model, or a mailbox that returned only some bodies is saved as read.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -157,4 +159,145 @@ test("Feishu authorization failure asks once and never publishes the old snapsho
   assert.equal(parsed.result.events, undefined);
   assert.doesNotMatch(run.stdout + run.stderr, /secret must not|old data/);
   assert.equal(JSON.parse(readFileSync(join(dir, "weekly-input.json"), "utf8")).id, "old");
+});
+
+function triage(mode = "ok") {
+  const dir = mkdtempSync(join(scratch, "inbox-"));
+  const cli = join(dir, "lark-cli");
+  const summaries = [
+    {
+      message_id: "m-budget",
+      thread_id: "t-budget",
+      subject: "季度预算确认",
+      head_from: { name: "王莉", mail_address: "wang@example.com" },
+      folder_id: "INBOX",
+      label_ids: ["UNREAD"],
+      date_formatted: "2026-11-07 09:12",
+      body_preview: "预算表见附件，请确认",
+    },
+    {
+      message_id: "m-bulk",
+      thread_id: "t-bulk",
+      subject: "本周产品动态",
+      head_from: { name: "通知机器人", mail_address: "noreply@example.com" },
+      folder_id: "INBOX",
+      date_formatted: "2026-11-07 08:00",
+      body_preview: "无需回复",
+    },
+    {
+      message_id: "m-long",
+      thread_id: "t-long",
+      subject: "一份很长的说明",
+      head_from: { name: "张三", mail_address: "zhang@example.com" },
+      folder_id: "INBOX",
+      date_formatted: "2026-11-06 22:41",
+      body_preview: "很长的正文",
+    },
+  ];
+  const bodies = { "m-budget": "机密正文：预算四十二万", "m-long": "长".repeat(3000) };
+  writeFileSync(
+    cli,
+    `#!${process.execPath}
+import fs from 'node:fs';
+const args = process.argv.slice(2);
+fs.appendFileSync('calls.jsonl', JSON.stringify(args) + '\\n');
+const mode = ${JSON.stringify(mode)};
+if (mode === 'auth') {
+  console.error(JSON.stringify({ ok: false, error: { type: 'authorization', message: 'secret must not be copied' } }));
+  process.exit(1);
+}
+const summaries = ${JSON.stringify(summaries)};
+const bodies = ${JSON.stringify(bodies)};
+let data;
+if (args[1] === '+triage') {
+  data = { messages: mode === 'empty' ? [] : summaries };
+} else {
+  const ids = args[args.indexOf('--message-ids') + 1].split(',');
+  data = {
+    messages: ids.map((id) => ({ message_id: id, body_plain_text: bodies[id] ?? '' })),
+    total: ids.length,
+    unavailable_message_ids: mode === 'partial' ? [ids[0]] : [],
+  };
+}
+console.log(JSON.stringify({ ok: true, identity: 'user', data }));
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(dir, "sources.json"),
+    JSON.stringify({
+      folderId: "INBOX",
+      onlyUnread: true,
+      lookbackHours: 24,
+      maxMessages: 30,
+      bodyChars: 1200,
+      skipSenders: ["noreply@example.com"],
+    }),
+  );
+  writeFileSync(join(dir, "context.json"), JSON.stringify({ answers: [], open: [], events: [] }));
+  writeFileSync(join(dir, "inbox-input.json"), '{"id":"old","messages":["old data"]}');
+  const run = spawnSync(
+    process.execPath,
+    [join(import.meta.dirname, "../examples/recipes/inbox-triage/collect.ts"), "sources.json"],
+    {
+      cwd: dir,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, AGENT_AUTOLOOP_CONTEXT: join(dir, "context.json") },
+    },
+  );
+  return { dir, run, parsed: resultFrom(readMessage(run.stdout), {}) };
+}
+
+test("mail is read as the user, a skipped sender's body is never read, and a long body is cut to a stated length", () => {
+  const { dir, run, parsed } = triage();
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(parsed.problem, undefined);
+  assert.equal(parsed.result.events?.[0].type, "inbox.ready");
+  assert.doesNotMatch(run.stdout, /机密正文|长{100}/, "邮件正文不写进日志");
+  const snapshot = JSON.parse(readFileSync(join(dir, "inbox-input.json"), "utf8"));
+  assert.deepEqual(
+    snapshot.messages.map((m: { message_id: string }) => m.message_id),
+    ["m-budget", "m-long"],
+  );
+  assert.equal(snapshot.messages[0].body, "机密正文：预算四十二万");
+  assert.equal([...snapshot.messages[1].body].length, 1200);
+  assert.equal(snapshot.messages[1].truncated, true);
+  assert.equal(snapshot.messages[0].truncated, false);
+  assert.equal(snapshot.id, parsed.result.events![0].id);
+  const calls: string[][] = readFileSync(join(dir, "calls.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.ok(calls.every((args) => args[args.indexOf("--as") + 1] === "user"));
+  const read = calls.find((args) => args.includes("--message-ids"))!;
+  assert.deepEqual(read[read.indexOf("--message-ids") + 1].split(","), ["m-budget", "m-long"]);
+  assert.ok(read.includes("--html=false"), "只取纯文本正文，不拉 HTML");
+  const filter = calls.find((args) => args.includes("--filter"))!;
+  assert.equal(JSON.parse(filter[filter.indexOf("--filter") + 1]).folder_id, "INBOX");
+});
+
+test("an empty inbox says so, keeps the old snapshot, and asks the mailbox for no bodies", () => {
+  const { dir, run, parsed } = triage("empty");
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(parsed.result.outcome, "nothing");
+  assert.equal(parsed.result.events, undefined);
+  assert.doesNotMatch(readFileSync(join(dir, "calls.jsonl"), "utf8"), /--message-ids/);
+  assert.equal(JSON.parse(readFileSync(join(dir, "inbox-input.json"), "utf8")).id, "old");
+});
+
+test("a mailbox that returned only some bodies is not saved as a complete snapshot", () => {
+  const { dir, run } = triage("partial");
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /没有返回部分邮件的正文/);
+  assert.equal(JSON.parse(readFileSync(join(dir, "inbox-input.json"), "utf8")).id, "old");
+});
+
+test("mail authorization failure asks once and keeps the previous snapshot", () => {
+  const { dir, run, parsed } = triage("auth");
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(parsed.result.outcome, "done");
+  assert.equal(parsed.result.ask?.length, 1);
+  assert.equal(parsed.result.events, undefined);
+  assert.doesNotMatch(run.stdout + run.stderr, /secret must not|old data/);
+  assert.equal(JSON.parse(readFileSync(join(dir, "inbox-input.json"), "utf8")).id, "old");
 });

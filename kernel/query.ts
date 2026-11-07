@@ -1,13 +1,19 @@
 // Reading the view: what the decisions and the doors ask of it, and the shapes they hand out.
 import { credential, type Environment } from "./credentials.ts";
 import { rows, type Fact, type Row, type View } from "./evolve.ts";
-import { ruleOf, type Rules } from "./rules.ts";
+import { ruleOf, type Rule, type Rules } from "./rules.ts";
 import type { Job } from "../protocol/job.ts";
 
 export function configuration(view: View, version?: number): Rules {
   const current = view.get("config", "rules");
   return (version === undefined || version === current?.version ? current : view.get("config", version))?.value;
 }
+/** The owner's pause that keeps a rule from taking work at this moment, if there is one. */
+export function pauseOf(view: View, rule: Rule, now: number): Row | null {
+  const row = view.get("pauses", rule.name);
+  return row && (row.until === null || Date.parse(row.until) > now) ? row : null;
+}
+
 export const workerOf = (view: View, run: Row) => configuration(view, run.rules_version).agents[run.agent]?.worker;
 export function agentsOf(view: View, worker: string) {
   const agents = Object.entries(configuration(view).agents);
@@ -34,6 +40,51 @@ export function eventsOf(view: View, runId: number) {
 export function sourceOf(view: View, runId: number) {
   const sources = [...new Set(eventsOf(view, runId).map((event) => event.source))];
   return sources.length === 1 ? sources[0] : null;
+}
+
+/** The rules an event went to, and the ones that would have taken it but were paused. */
+export function routingOf(event: Row) {
+  const paused: string[] = JSON.parse(event.paused ?? "[]");
+  return { routed: JSON.parse(event.routed).filter((name: string) => !paused.includes(name)), paused };
+}
+
+/**
+ * What became of an event, for the source that sent it: every run it is in now, as retries can merge runs. A run's summary
+ * and the events its receipt sent are what the Agent made of all its events, so only a run of this source's alone has them.
+ */
+export function eventOutcome(view: View, source: string, id: number) {
+  const event = view.get("events", id);
+  if (event?.source !== source || !event.sent) return null;
+  const runs = rows(view, "run_events", { event_id: id })
+    .map((link) => view.get("runs", link.run_id)!)
+    .sort((a, b) => a.id - b.id);
+  return {
+    event: event.id,
+    ...routingOf(event),
+    runs: runs.map((run) => {
+      const own = sourceOf(view, run.id) === source;
+      const sent = (JSON.parse(run.emitted ?? "[]") as number[]).map((id) => view.get("events", id)!);
+      return {
+        run: run.id,
+        rule: run.rule,
+        state: run.state,
+        attempts: run.attempts,
+        error: run.error,
+        finishedAt: run.finished_at,
+        summary: own ? run.summary : null,
+        events: own
+          ? sent.map(({ key: id, type, subject, summary, detail, link }) => ({
+              id,
+              type,
+              subject,
+              summary,
+              detail,
+              link,
+            }))
+          : null,
+      };
+    }),
+  };
 }
 
 /** The cards a run may close: open before it was claimed, from the same source and group. */

@@ -1,0 +1,8 @@
+{
+  "folderId": "INBOX",
+  "onlyUnread": true,
+  "lookbackHours": 24,
+  "maxMessages": 30,
+  "bodyChars": 1200,
+  "skipSenders": ["noreply@example.com", "notifications@example.com"]
+}

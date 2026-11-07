@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
 
@@ -26,7 +27,7 @@ function start() {
       "--disable-warning=ExperimentalWarning",
       "--input-type=module",
       "-e",
-      `await import(${JSON.stringify(join(code, "host", "runtime.ts"))});`,
+      `await import(${JSON.stringify(pathToFileURL(join(code, "host", "runtime.ts")).href)});`,
     ],
     {
       env: {

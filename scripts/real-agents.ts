@@ -1,5 +1,5 @@
 // Failure modes: a real CLI never finishes; a receipt is unreadable; the answer loses the session; cleanup leaves a child
-// process or a test database. Claude is pinned to Haiku and all launches, including repair, share a three-turn ceiling.
+// process or a test database. Codex uses its configured model; Claude is pinned to Haiku. All launches share a three-turn ceiling.
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir, cpus } from "node:os";
@@ -23,7 +23,7 @@ writeFileSync(
         use,
         access: "read",
         timeout: 3,
-        ...(use === "claude" ? { model: "claude-haiku-5-5" } : { model: "gpt-6.1-sol", effort: "low" }),
+        ...(use === "claude" ? { model: "claude-haiku-5-5" } : { effort: "low" }),
       },
     },
     channels: {},
@@ -88,7 +88,7 @@ try {
         machine: cpus()[0].model,
         node: process.version,
         agent: use,
-        model: use === "claude" ? "claude-haiku-5-5" : "gpt-6.1-sol",
+        model: use === "claude" ? "claude-haiku-5-5" : "Codex configured default",
         launches,
         runs: runs.length,
         resumed: true,
@@ -103,7 +103,7 @@ try {
   for (const entry of worker.entries())
     if (entry.pid) {
       try {
-        process.kill(-entry.pid, "SIGKILL");
+        process.kill(process.platform === "win32" ? entry.pid : -entry.pid, "SIGKILL");
       } catch {}
     }
   server.closeAllConnections();

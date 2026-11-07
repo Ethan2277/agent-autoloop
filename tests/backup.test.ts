@@ -20,6 +20,8 @@ import {
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { powershell, psQuote } from "../host/command.ts";
 import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
@@ -31,7 +33,7 @@ const { backup, restore } = await import("../cli/backup.ts");
 
 const scratch = mkdtempSync(join(tmpdir(), "agent-autoloop-backup-"));
 after(() => {
-  hub.db.close();
+  if (hub.db.isOpen) hub.db.close();
   rmSync(scratch, { recursive: true, force: true });
 });
 let folders = 0;
@@ -40,7 +42,14 @@ const folder = () => {
   mkdirSync(made);
   return made;
 };
-const mode = (file: string) => statSync(file).mode & 0o777;
+const privateMode = (file: string, expected: number) => {
+  if (process.platform !== "win32") return assert.equal(statSync(file).mode & 0o777, expected);
+  const allowed = powershell(
+    `$acl = [IO.${statSync(file).isDirectory() ? "Directory" : "File"}]::GetAccessControl(${psQuote(file)}); ($acl.Access | ForEach-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }) -join ','`,
+  ).split(",");
+  const owner = powershell("[Security.Principal.WindowsIdentity]::GetCurrent().User.Value");
+  assert.ok(allowed.length && allowed.every((sid) => sid === owner || sid === "S-1-5-18"), allowed.join(","));
+};
 const rows = (file: string) => {
   const db = new DatabaseSync(file);
   try {
@@ -68,8 +77,8 @@ test("a real hub's data, backed up while it runs, comes back whole under its own
   const target = join(folder(), "snapshot");
   const { files } = await backup(home, target);
   assert.ok(files.includes("hub.db") && files.includes("master.key"), files.join());
-  assert.equal(mode(join(target, "hub.db")), 0o600);
-  assert.equal(mode(join(target, "master.key")), 0o600);
+  privateMode(join(target, "hub.db"), 0o600);
+  privateMode(join(target, "master.key"), 0o600);
   const { n } = hub.one<{ n: number }>("SELECT COUNT(*) AS n FROM facts")!;
   assert.ok(n > 0);
   assert.equal(rows(join(target, "hub.db")), n);
@@ -85,7 +94,7 @@ test("a real hub's data, backed up while it runs, comes back whole under its own
       "--disable-warning=ExperimentalWarning",
       "--input-type=module",
       "-e",
-      `const hub = await import(${JSON.stringify(join(import.meta.dirname, "../host/runtime.ts"))});
+      `const hub = await import(${JSON.stringify(pathToFileURL(join(import.meta.dirname, "../host/runtime.ts")).href)});
        console.log(JSON.stringify(hub.stateOf().runs.map((run) => run.id)));`,
     ],
     { env: { ...process.env, AGENT_AUTOLOOP_HOME: other }, encoding: "utf8" },
@@ -102,7 +111,7 @@ test("a backup into an empty folder that's already there makes it private: it ho
   mkdirSync(target);
   chmodSync(target, 0o755);
   await backup(home, target);
-  assert.equal(mode(target), 0o700);
+  privateMode(target, 0o700);
 });
 
 test("a restore keeps what it replaced, and the old WAL doesn't stay beside the new database", async () => {
@@ -119,7 +128,7 @@ test("a restore keeps what it replaced, and the old WAL doesn't stay beside the 
   assert.ok(!existsSync(join(target, "hub.db-wal")));
   assert.equal(rows(join(target, "hub.db")), 2);
   assert.equal(readFileSync(join(target, "master.key"), "utf8").trim(), key);
-  assert.equal(mode(join(target, "hub.db")), 0o600);
+  privateMode(join(target, "hub.db"), 0o600);
   assert.equal(readFileSync(join(target, "config.json"), "utf8"), "{}", "what the backup doesn't have stays");
   assert.equal(rows(join(safety, "hub.db")), 2, "what it replaced is kept, WAL and all");
 });

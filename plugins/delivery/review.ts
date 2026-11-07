@@ -1,5 +1,6 @@
 // The review before a merge. Only a text snapshot of the branch's own changes leaves Git: no checkout, so nothing from
 // the pull request can run here.
+import { commandLine } from "../../host/command.ts";
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -96,7 +97,11 @@ export async function reviewSnapshot(bare: string, snapshot: string, main: strin
   const { command } = config.review;
   const argv = command ?? [findProgram("codex", () => IN_THE_APP), ...codexCommand(output, level)];
   const args = argv.slice(1).map((arg) => arg.replaceAll("{input}", changesFile));
-  const child = execFile(argv[0], args, { cwd: snapshot, timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
+  const child = execFile(...commandLine([argv[0], ...args]), {
+    cwd: snapshot,
+    timeout: 600000,
+    maxBuffer: 8 * 1024 * 1024,
+  });
   child.stdin!.end(prompt);
   const text = await new Promise<string>((resolve, reject) => {
     let stdout = "";

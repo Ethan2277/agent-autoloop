@@ -5,7 +5,7 @@
       "name": "看新 issue",
       "worker": "mac-mini",
       "use": "command",
-      "command": ["{cwd}/examples/watch-github-issues.sh", "owner/repo", "created:>=2026-11-04"]
+      "command": ["{cwd}/examples/watch-github-issues.sh", "owner/repo", "created:>=2026-11-04T00:00:00+08:00"]
     },
     "agent": { "name": "Agent", "worker": "mac-mini", "use": "codex", "access": "edit" }
   },

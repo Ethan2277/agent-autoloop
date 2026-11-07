@@ -2,15 +2,20 @@
 // the environment they read.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { after } from "node:test";
+
+export const beforeCleanup: (() => void)[] = [];
 
 export function setup(name: string, rules = "rules.fixture.json") {
   const directory = mkdtempSync(join(tmpdir(), `agent-autoloop-${name}-`));
   process.env.AGENT_AUTOLOOP_HOME = directory;
-  process.env.AGENT_AUTOLOOP_RULES = rules.startsWith("/") ? rules : join(import.meta.dirname, rules);
+  process.env.AGENT_AUTOLOOP_RULES = isAbsolute(rules) ? rules : join(import.meta.dirname, rules);
   process.env.AGENT_AUTOLOOP_PUBLIC_URL = "https://hub.test";
-  after(() => rmSync(directory, { recursive: true, force: true }));
+  after(() => {
+    for (const close of beforeCleanup) close();
+    rmSync(directory, { recursive: true, force: true });
+  });
   return directory;
 }
 
