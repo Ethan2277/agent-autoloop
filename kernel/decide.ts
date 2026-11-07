@@ -460,7 +460,7 @@ function answer(draft: Draft, id: number, given: Row) {
   if (text !== null && [...text].length > ANSWER_TEXT) throw new InputError(`${words}最多 ${ANSWER_TEXT} 字`);
   if (card.kind === "notice") {
     closeCard(draft, card, "已处理", given.by ?? null, text);
-    return { changed: true, state: "closed" };
+    return answered(draft, id, given, "closed");
   }
   const optionCount = JSON.parse(card.options).length;
   const inRange = Number.isInteger(given.choice) && given.choice >= 0 && given.choice < optionCount;
@@ -472,7 +472,15 @@ function answer(draft: Draft, id: number, given: Row) {
   const decision = { choice: given.choice ?? null, answer: text, by: given.by ?? null, decided_at: draft.at };
   put(draft, "cards", id, { state: "decided", ...decision, answer_event: eventId, version: card.version + 1 });
   if (rule) enqueue(draft, rule, eventId, card.lane, card.agent === rule.to ? card.session : null);
-  return { changed: true, state: "decided" };
+  return answered(draft, id, given, "decided");
+}
+
+/** A channel may draw the answered card at once, inside the click it was answered with: given the card as the channel
+ *  is sent it next, it needn't work out for itself what an answer does to a card. */
+function answered(draft: Draft, id: number, given: Row, state: string) {
+  if (given.channel === undefined) return { changed: true, state };
+  const links = draft.rules.channels[given.channel]?.links === true;
+  return { changed: true, state, card: cardView(draft.view.get("cards", id)!, draft.env, given.ref, links) };
 }
 
 function nextCard(draft: Draft, channel: string) {

@@ -33,8 +33,8 @@ export const tell = (key: string, title: string, text: string, now = Date.now())
   execute("tell", [key, title, text], now);
 export const ask = (task: string, question: object, now = Date.now()): CardAck => execute("ask", [task, question], now);
 type Answer = { choice?: number; text?: string; by?: string; channel?: string; ref?: string };
-export const answer = (id: number, given: Answer, now = Date.now()): { changed: boolean; state: string } =>
-  execute("answer", [id, given], now);
+type Answered = { changed: boolean; state: string; card?: ReturnType<typeof query.cardView> };
+export const answer = (id: number, given: Answer, now = Date.now()): Answered => execute("answer", [id, given], now);
 export const resolve = (id: number, reason: string, by: string, now = Date.now()): boolean =>
   execute("resolve", [id, reason, by], now);
 export const nextCard = (channel: string, now = Date.now()): ReturnType<typeof query.cardView> | null =>

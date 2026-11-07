@@ -6,7 +6,8 @@
 //     lark-cli's `event consume` always replies with a bare 200.
 //   - It sends and updates messages through one SDK client that keeps its token and connections, instead of starting
 //     a new lark-cli process (and new connections) for every call.
-// The answer still goes to the hub first; the reply only shows what the hub counted.
+// The answer still goes to the hub first; the reply draws the card the hub gives back once it has counted it, the same
+// version the hub then hands this channel to send. A hub that gives none back gets a short note instead.
 //
 // Only one connection per app should be listening: Feishu hands each click to one of them at random. Don't run
 // `lark-cli event consume` for this app while this is in use.
@@ -78,15 +79,6 @@ function parsed(value: unknown): any {
 
 const said = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** The card as the hub's next version will have it once it counts this answer (kernel/decide.ts: answer, closeCard). */
-function counted(card: Card, choice: number, note: string | undefined): Card {
-  const text = note?.trim() || null;
-  const version = card.version + 1;
-  if (card.kind === "notice")
-    return { ...card, state: "closed", result: "已处理", answer: text ?? card.answer, version };
-  return { ...card, state: "decided", choice, answer: text, version };
-}
-
 export default async function feishuInstant(context: ChannelContext) {
   const { hub, options, log, signal } = context;
   const { default: builtin, render } = await builtIn();
@@ -136,9 +128,6 @@ export default async function feishuInstant(context: ChannelContext) {
   const update = (ref: string, content: string) =>
     call("update", () => client.im.v1.message.patch({ path: { message_id: ref }, data: { content } }));
 
-  /** Each open card as last put on screen, to draw what a click makes of it. Gone after a restart: then a click gets
-   *  a short note and the update that follows the answer redraws the card. */
-  const onScreen = new Map<number, Card>();
   /** A click being handled, and the version its reply drew. The hub sends that version too; drawing it again would
    *  race the reply for nothing. */
   const clicks = new Map<number, Promise<number | null>>();
@@ -175,8 +164,6 @@ export default async function feishuInstant(context: ChannelContext) {
             }
           } else ref = await send(`agent-autoloop-card-${card.id}`, content);
         }
-        if (card.state === "done" || card.state === "closed") onScreen.delete(card.id);
-        else onScreen.set(card.id, { ...card, ref });
         await hub.delivered(card.id, card.version, ref);
       } catch (error) {
         log(`card ${card.id} not sent: ${error}`);
@@ -196,7 +183,6 @@ export default async function feishuInstant(context: ChannelContext) {
       ref: data.context?.open_message_id ?? data.open_message_id,
     };
     if (note !== undefined) given.text = note;
-    const shown = onScreen.get(id);
     let result: any;
     try {
       let timer: NodeJS.Timeout | undefined;
@@ -213,9 +199,9 @@ export default async function feishuInstant(context: ChannelContext) {
     const what = note !== undefined ? "note submitted" : "answered";
     log(`card ${id}: ${what} by ${given.by}, ${result.changed ? "counted" : "already settled"}`);
     if (!result.changed) return { reply: { toast: { type: "info", content: "这张卡片已经处理过了" } }, drawn: null };
-    if (!shown) return { reply: { toast: { type: "success", content: "已记录" } }, drawn: null };
-    const next = counted(shown, choice, note);
-    return { reply: { card: { type: "raw", data: render(next) } }, drawn: next.version };
+    const card: Card | undefined = result.card;
+    if (!card) return { reply: { toast: { type: "success", content: "已记录" } }, drawn: null };
+    return { reply: { card: { type: "raw", data: render(card) } }, drawn: card.version };
   }
 
   async function clicked(data: any): Promise<Reply> {

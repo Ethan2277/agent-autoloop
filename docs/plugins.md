@@ -72,7 +72,7 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 | `hub.nextCard(50)` | 长轮询领卡片，没卡片返回 `{ card: null }` |
 | `hub.delivered(id, version, ref)` | 报告送达，保存外部消息编号 |
 | `hub.failed(id, version, error)` | 报告发送失败 |
-| `hub.answer(id, { choice, by, ref })` | 转交回答；核对回答人和原消息 |
+| `hub.answer(id, { choice, by, ref })` | 转交回答；核对回答人和原消息；算数时带回记好后的卡片 |
 
 `ref` 为空就发新消息，有值就更新原消息；不能更新时只报告。没报告的卡片一分钟后重派。`signal` 中止时退出；函数在此之前返回或抛错，都记日志并在 30 秒后重启，所以它要一直运行。插件和中台在同一个进程里：没接住的错误只记日志，不让中台退出。
 
@@ -86,7 +86,7 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 通道和中台共用一个 Node 进程，外部调用应异步等待。内置飞书通道的用户查询、发送和更新均异步调用 CLI，发送期间中台仍能接收事件和心跳。
 
-能在回调里直接响应的平台，可以先 `hub.answer`，确认算数后在响应里带上新卡片，点完就显示结果。[feishu-instant](../examples/plugins/feishu-instant/README.md) 是飞书的例子：用官方 Node SDK 自己维持长连接，卡片样子沿用内置飞书通道；它要另装 SDK，并把 App Secret 放进 `secrets.env`。
+能在回调里直接响应的平台，可以先 `hub.answer`，算数时返回里的 `card` 就是记好之后的卡片，把它画进响应，点完就显示结果；这一版和中台随后交来的一样，不用再改一次消息。[feishu-instant](../examples/plugins/feishu-instant/README.md) 是飞书的例子：用官方 Node SDK 自己维持长连接，卡片样子沿用内置飞书通道；它要另装 SDK，并把 App Secret 放进 `secrets.env`。
 
 ## 事件插件
 

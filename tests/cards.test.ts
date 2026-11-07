@@ -2,8 +2,9 @@
 // is open makes a second card, or closed it blocks asking again; an answer takes a choice that doesn't exist, carries
 // more words or a longer reference than the protocol allows, counts twice,
 // or beats a resolve that came first (only one may change an open card); an answer from someone not on the channel's list,
-// or on a message that isn't the one sent, counts; an answer doesn't wake the thread that asked, wakes another thread, is
-// lost because its run was merged, or doesn't carry the session and what the asker left for itself; the card doesn't show
+// or on a message that isn't the one sent, counts; an answer through a channel gives back a card other than the one that
+// channel is sent next, so what it draws at once differs from what the hub has; an answer doesn't wake the thread that
+// asked, wakes another thread, is lost because its run was merged, or doesn't carry the session and what the asker left for itself; the card doesn't show
 // what was done once its run finishes; a run resolves a card outside what it was given to check, or a bad id spoils its own
 // result; resolving wakes nobody. Delivery: a channel gets a card it has, gets none it should, loses a report and sends a second
 // message (the ref sticks, and a stale report doesn't undo a newer one); a stale failure delays a newer version; a failed
@@ -325,6 +326,22 @@ test("a channel's answer must come from someone on its list, on the message it s
   assert.throws(() => answer(id, { choice: 0, by: "me", channel: "chat", ref: "om_forwarded" }, at(2)), AuthError);
   assert.equal(card(id).state, "open");
   assert.equal(answer(id, { choice: 0, by: "me", channel: "chat", ref: "om_1" }, at(2)).changed, true);
+});
+
+test("a channel's answer gives back the card exactly as that channel is sent it next", () => {
+  clean();
+  const { id } = asked(1);
+  delivered("chat", id, nextCard("chat", at(1))!.version, "om_1", at(1));
+  const decided = answer(id, { choice: 1, text: "先备份", by: "me", channel: "chat", ref: "om_1" }, at(2)).card;
+  assert.deepEqual(decided, nextCard("chat", at(2)));
+  clean();
+  ingest("app", note(2), at(3));
+  const job = claim("w1", at(3))!;
+  finish(job.run, job.token, { outcome: "done", notice: [{ title: "要你做一件事", text: "开权限" }] }, at(3));
+  const notice = nextCard("chat", at(3))!;
+  delivered("chat", notice.id, notice.version, "om_2", at(3));
+  const closed = answer(notice.id, { choice: 0, text: "开好了", by: "me", channel: "chat", ref: "om_2" }, at(4)).card;
+  assert.deepEqual(closed, nextCard("chat", at(4)));
 });
 
 test("a run may resolve only what it was given to check, and a bad id doesn't spoil its own result", () => {
