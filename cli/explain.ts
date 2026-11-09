@@ -17,6 +17,7 @@ const when = (rule: Rule, rules: Rules, now: number) =>
 function details(rule: Rule, rules: Rules, now: number) {
   const parts = [when(rule, rules, now), `→ ${rule.to}`, rule.cwd];
   if (rule.parallel) parts.push(`并发 ${rule.parallel}`);
+  if (rule.channels?.length) parts.push(`只发 ${rule.channels.join("、")}`);
   if (rule.resume) parts.push("接着上一轮的会话");
   if (rule.group !== rule.name) parts.push(`组 ${rule.group}`);
   if (rule.tell !== "needed") parts.push(`通知 ${rule.tell}`);

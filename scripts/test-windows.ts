@@ -20,6 +20,7 @@ const unix = new Set([
   "plugin-node-path",
   "recipes",
   "releases",
+  "service-plist",
   "service-running",
   "try",
   "uninstall",

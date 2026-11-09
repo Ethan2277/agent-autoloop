@@ -17,7 +17,7 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 ## 改规则
 
-改 `rules.json`，运行 `agent-autoloop check`。几秒内生效；写错了旧规则继续跑，并推一张卡片说错在哪。`agent-autoloop rules explain` 列出本机规则生效的样子和下次定时，`agent-autoloop emit <类型> --dry-run` 预演一条事件会派给谁，两个都只看本机的 `rules.json`，不连接中台。尚未领取的任务在领活时一起更新 Agent、目录和权限；已领取任务的 Job 配置与接单程序保留到这次执行结束。
+改 `rules.json`，运行 `agent-autoloop check`。几秒内生效；写错了旧规则继续跑，并推一张卡片说错在哪。`agent-autoloop rules explain [文件]` 列出规则生效的样子和下次定时，`agent-autoloop emit <类型> --dry-run` 预演一条事件会派给谁，两个都只看本机文件（`rules explain` 不写文件时看 `rules.json`），不连接中台。尚未领取的任务在领活时一起更新 Agent、目录和权限；已领取任务的 Job 配置与接单程序保留到这次执行结束。
 
 每条规则回答五个问题：什么事件（`when`），交给谁（`to`），在哪（`cwd`），照什么做（`skill`、`prompt`），要不要告诉用户（`tell`，默认只在有卡片时）。
 

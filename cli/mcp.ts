@@ -24,6 +24,9 @@ const specs = [
     ["id", "type"],
   ],
   ["tell", "用本机来源发送通知；相同编号只发一次", { key: string, text: string }, ["key", "text"]],
+  ["pause", "暂停一条规则：到点不跑、来事件不接", { rule: string, reason: string, until: string }, ["rule"]],
+  ["resume", "恢复一条暂停的规则", { rule: string }, ["rule"]],
+  ["run", "立即运行一条规则一轮", { rule: string, subject: string, reason: string }, ["rule"]],
 ] as const;
 
 const usesSourceKey = (name: string) => ["emit", "tell"].includes(name);
@@ -72,6 +75,18 @@ function callTool(hub: Hub, name: Tool["name"], args: any) {
       return hub.event(args);
     case "tell":
       return hub.tell(args);
+    case "pause":
+      return hub.pause(args.rule, {
+        ...(args.reason !== undefined && { reason: args.reason }),
+        ...(args.until !== undefined && { until: args.until }),
+      });
+    case "resume":
+      return hub.resume(args.rule);
+    case "run":
+      return hub.run(args.rule, {
+        ...(args.subject !== undefined && { subject: args.subject }),
+        ...(args.reason !== undefined && { reason: args.reason }),
+      });
   }
 }
 

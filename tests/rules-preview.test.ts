@@ -30,6 +30,16 @@ test("explain lists rules, agents, channels and next runs, but no prompt or skil
     assert.ok(!lines.includes(privateText), privateText);
 });
 
+test("explain shows a rule's channels, and can read a draft file", async () => {
+  const given = JSON.parse(fixture);
+  given.rules[0].channels = ["chat"];
+  const lines = explainRules(JSON.stringify(given), at(0), "UTC").join("\n");
+  assert.match(lines, /意见：.*只发 chat/);
+  const draft = join(home, "draft.json");
+  writeFileSync(draft, JSON.stringify(given));
+  assert.match(await cli("rules", "explain", draft), /只发 chat/);
+});
+
 test("explain says which rules go on in the last round's session", () => {
   assert.ok(!explainRules(fixture, at(0), "UTC").join("\n").includes("接着上一轮的会话"));
   const given = JSON.parse(fixture);

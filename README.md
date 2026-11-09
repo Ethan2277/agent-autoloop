@@ -102,7 +102,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 `agent-autoloop pause <规则>`、`resume <规则>` 暂停和恢复一条规则，暂停期间到点不跑、来事件不接，恢复后不补跑；`agent-autoloop run <规则>` 立即跑一轮。这些记在中台的日志里，不改 `rules.json`。
 
-保存后几秒内自动生效，可以运行 `agent-autoloop check` 检查，`agent-autoloop check <文件>` 检查一份草稿，不碰正在跑的中台；`agent-autoloop rules explain` 看生效的规则和下次定时，`agent-autoloop emit <类型> --dry-run` 预演一条事件会派给谁（不连接中台、不写日志）。就算改错了，或者文件被删、读不到，系统也会继续按旧规则跑，并发卡片提醒你。
+保存后几秒内自动生效，可以运行 `agent-autoloop check` 检查，`agent-autoloop check <文件>` 检查一份草稿，不碰正在跑的中台；`agent-autoloop rules explain [文件]` 看生效的规则和下次定时（也可以指定一份草稿），`agent-autoloop emit <类型> --dry-run` 预演一条事件会派给谁（不连接中台、不写日志）。就算改错了，或者文件被删、读不到，系统也会继续按旧规则跑，并发卡片提醒你。
 
 ### Agent 怎么跟中台配合？
 
@@ -171,6 +171,8 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 | [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | `hermes chat -Q -q {prompt}` |
 | [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
 | [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
+
+OpenClaw 的 `agent exec` 每次默认最多跑 600 秒，到点就算失败；要跑更久的，在命令里加 `--timeout <秒>`（`0` 不限时）。
 
 会说 ACP 的 Agent 用 `use: "acp"` 接，还能接着原来的会话做：[Gemini CLI](https://geminicli.com/docs/cli/acp-mode/) 写 `"command": ["gemini", "--acp"]`，[OpenCode](https://opencode.ai/docs/acp) 写 `"command": ["opencode", "acp"]`。这两条已经跑通了 ACP 握手（Gemini CLI 0.67.0、OpenCode 1.1.2），多轮问答和会话续接还没跑过。
 

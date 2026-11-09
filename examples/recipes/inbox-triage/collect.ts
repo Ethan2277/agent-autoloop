@@ -72,32 +72,52 @@ if (
       ...(sources.onlyUnread ? { is_unread: true } : {}),
       time_range: { start_time: from.toISOString(), end_time: until.toISOString() },
     };
-    const listed = lark([
-      "mail",
-      "+triage",
-      "--format",
-      "json",
-      "--max",
-      String(sources.maxMessages),
-      "--filter",
-      JSON.stringify(filter),
-    ]);
-    if (!Array.isArray(listed.messages)) throw new Error("邮箱没有返回邮件列表，不能当作没有新邮件");
+    // A skipped sender still takes a slot in the page it arrives in, so the listing is read page by page: reading only
+    // the first would let notifications fill the cap and make a mailbox with mail look empty.
     const skip = new Set(sources.skipSenders.map((address: string) => address.trim().toLowerCase()));
-    const picked = (listed.messages as Summary[]).filter(
-      (message) => !skip.has((message.head_from?.mail_address ?? "").toLowerCase()),
-    );
-    if (!picked.length) {
+    const picked: Summary[] = [];
+    // One request returns at most this many summaries however it is paged inside, so paging past it buys nothing.
+    const ceiling = 400;
+    let scanned = 0;
+    let pageToken = "";
+    let more = true;
+    // Mail the owner wants that the cap left out of the snapshot.
+    let left = false;
+    while (picked.length < sources.maxMessages && more && scanned < ceiling) {
+      const listed = lark([
+        "mail",
+        "+triage",
+        "--format",
+        "json",
+        "--max",
+        String(Math.min(sources.maxMessages, ceiling - scanned)),
+        "--filter",
+        JSON.stringify(filter),
+        ...(pageToken ? ["--page-token", pageToken] : []),
+      ]);
+      if (!Array.isArray(listed.messages)) throw new Error("邮箱没有返回邮件列表，不能当作没有新邮件");
+      const page = listed.messages as Summary[];
+      scanned += page.length;
+      for (const message of page) {
+        if (skip.has((message.head_from?.mail_address ?? "").toLowerCase())) continue;
+        if (picked.length < sources.maxMessages) picked.push(message);
+        else left = true;
+      }
+      // An empty page ends the read whatever the listing says about more: there is nowhere left to page from.
+      const next = typeof listed.page_token === "string" ? listed.page_token : "";
+      more = listed.has_more === true && next !== "" && page.length > 0;
+      pageToken = next;
+    }
+    // Only a window read to its end with nothing left out is all of it; reaching the cap says nothing about what is after.
+    const complete = !more && !left;
+    if (!picked.length && complete) {
       console.log(`没事可做：${sources.lookbackHours} 小时内没有需要看的邮件`);
     } else {
-      // A sender the owner asked to skip is not read at all, so its body never reaches this machine.
-      const contents = lark([
-        "mail",
-        "+messages",
-        "--message-ids",
-        picked.map((m) => m.message_id).join(","),
-        "--html=false",
-      ]);
+      // A sender the owner asked to skip is not read at all, so its body never reaches this machine. A read cut short
+      // with nothing kept has no bodies to ask for, and an empty id list is not a request the mailbox takes.
+      const contents = picked.length
+        ? lark(["mail", "+messages", "--message-ids", picked.map((m) => m.message_id).join(","), "--html=false"])
+        : { messages: [] };
       if (!Array.isArray(contents.messages)) throw new Error("邮箱没有返回邮件正文，资料不完整");
       if (Array.isArray(contents.unavailable_message_ids) && contents.unavailable_message_ids.length)
         throw new Error(`邮箱没有返回部分邮件的正文（${contents.unavailable_message_ids.length} 封），本次不生成清单`);
@@ -130,6 +150,8 @@ if (
         until: until.toISOString(),
         folder: sources.folderId,
         limit: sources.maxMessages,
+        // What the listing got through, so the brief can say whether mail was left unscanned.
+        scanned: { summaries: scanned, complete },
         messages,
       };
       const id = createHash("sha256").update(JSON.stringify(content)).digest("hex");
@@ -141,11 +163,13 @@ if (
             id,
             type: "inbox.ready",
             subject: "inbox",
-            summary: `本期收件箱读取了 ${messages.length} 封`,
+            summary: `本期收件箱读取了 ${messages.length} 封${complete ? "" : "，还有邮件没读完"}`,
           },
         ],
       };
-      console.log(`收件箱读取完成：${messages.length} 封\n\n\`\`\`agent-autoloop\n${JSON.stringify(receipt)}\n\`\`\``);
+      console.log(
+        `收件箱读取完成：${messages.length} 封${complete ? "" : "（还有邮件没读，本期没读全）"}\n\n\`\`\`agent-autoloop\n${JSON.stringify(receipt)}\n\`\`\``,
+      );
     }
   } catch (error) {
     if (!(error instanceof AuthorizationError)) throw error;

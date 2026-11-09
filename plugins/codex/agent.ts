@@ -66,6 +66,9 @@ export default {
       else if (event.type === "item.completed" && event.item?.type === "agent_message") seen.text = event.item.text;
       else if (event.type === "turn.completed") {
         seen.completed = seen.finished = true;
+        // A reconnect is announced as an error event and then got over — it fell back to another transport and carried
+        // on — so it isn't how the turn ended. A finished run was redone twelve times over one of these.
+        delete seen.error;
         const { input_tokens = 0, output_tokens = 0, cached_input_tokens = 0 } = event.usage ?? {};
         seen.sessionUsage = { input: input_tokens, output: output_tokens, cached: cached_input_tokens };
       } else if (event.type === "turn.failed") {

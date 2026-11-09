@@ -45,7 +45,7 @@ const HELP = `Agent 自动化中台
   agent-autoloop resolve <卡片> <结果>   这件事不用决定了，写一句结果
   agent-autoloop doctor                  查哪里没配好
   agent-autoloop check [文件]            检查规则文件，不碰中台；不写文件就查 rules.json
-  agent-autoloop rules explain           按本机 rules.json 说明生效的规则、Agent、通道和下次定时
+  agent-autoloop rules explain [文件]    按本机 rules.json（或指定草稿）说明生效的规则、Agent、通道和下次定时
   agent-autoloop pause <规则> [--reason 原因] [--until 时间]
                                     暂停一条规则：到点不跑、来事件不接，直到恢复
   agent-autoloop resume <规则>
@@ -146,7 +146,7 @@ rules.json 里这个定时任务要写 cwd；你答了，中台叫醒它的 Agen
   resolve: { flags: [], usage: "用法：agent-autoloop resolve <卡片> <结果>" },
   restore: { flags: ["yes"], usage: RESTORE_USAGE },
   resume: { flags: [], usage: "用法：agent-autoloop resume <规则>" },
-  rules: { flags: [], usage: "用法：agent-autoloop rules explain" },
+  rules: { flags: [], usage: "用法：agent-autoloop rules explain [文件]" },
   run: { flags: ["subject", "reason"], usage: "用法：agent-autoloop run <规则> [--subject 对象] [--reason 说明]" },
   service: { flags: [], usage: "用法：agent-autoloop service install|remove" },
   status: { flags: ["json"], usage: STATUS_USAGE },
@@ -637,9 +637,16 @@ async function restoreCommand(args: string[]) {
 
 async function rulesCommand(args: string[]) {
   const { rest } = flags(args);
-  if (rest[0] !== "explain" || rest.length > 1) return fail(TAKES.rules.usage);
+  if (rest[0] !== "explain" || rest.length > 2) return fail(TAKES.rules.usage);
+  const file = rest[1] ? path.resolve(rest[1]) : RULES_FILE;
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    return fail(`读不到 ${file}：${(error as Error).message}`);
+  }
   const { explainRules } = await import("./explain.ts");
-  for (const line of explainRules(readFileSync(RULES_FILE, "utf8"), Date.now())) console.log(line);
+  for (const line of explainRules(text, Date.now())) console.log(line);
 }
 
 async function tell(args: string[]) {

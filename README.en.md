@@ -104,7 +104,7 @@ External events work the same way once the source is connected. To hand new GitH
 
 `agent-autoloop pause <rule>` and `resume <rule>` pause and resume one rule: while paused it skips its scheduled times and doesn't take events, and a resume doesn't catch up on what was skipped. `agent-autoloop run <rule>` runs it once now. These are kept in the hub's log; `rules.json` is not changed.
 
-Changes take effect within seconds of saving. Run `agent-autoloop check` to validate, `agent-autoloop check <file>` to validate a draft without touching the running hub, `agent-autoloop rules explain` to see the rules in effect and their next runs, and `agent-autoloop emit <type> --dry-run` to preview who an event would go to (it doesn't contact the hub or write to the log). If you make a mistake, or the file is deleted or can't be read, the hub keeps running the previous valid rules and sends you a card about it.
+Changes take effect within seconds of saving. Run `agent-autoloop check` to validate, `agent-autoloop check <file>` to validate a draft without touching the running hub, `agent-autoloop rules explain [file]` to see the rules in effect and their next runs (a draft file too), and `agent-autoloop emit <type> --dry-run` to preview who an event would go to (it doesn't contact the hub or write to the log). If you make a mistake, or the file is deleted or can't be read, the hub keeps running the previous valid rules and sends you a card about it.
 
 ### How agents talk back to the hub
 
@@ -173,6 +173,8 @@ Built-in plugins ship with the program and are enabled through configuration. Us
 | [Hermes](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | `hermes chat -Q -q {prompt}` |
 | [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
 | [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
+
+OpenClaw's `agent exec` stops each run after 600 seconds by default, and that counts as a failure; for longer work add `--timeout <seconds>` to the command (`0` means no limit).
 
 Agents that speak ACP connect with `use: "acp"` and can go on in the same session: [Gemini CLI](https://geminicli.com/docs/cli/acp-mode/) is `"command": ["gemini", "--acp"]`, and [OpenCode](https://opencode.ai/docs/acp) is `"command": ["opencode", "acp"]`. Both answered the ACP handshake (Gemini CLI 0.67.0, OpenCode 1.1.2); multi-turn Q&A and session resumption have not been run yet.
 

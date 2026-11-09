@@ -17,7 +17,7 @@
 
 ## 读什么、留什么
 
-读取用 `mail +triage` 拿列表（只取元数据和摘要），再用 `mail +messages` 按 `message_id` 批量取正文，两步都是 `--as user`，只用本人已有的权限，不换成机器人身份去拿更多信，也不读 `skipSenders` 里的发件人。时间范围写进 `--filter` 的 `time_range`，按北京时间显示。一次最多读 `maxMessages` 封：读到的是这段时间里最新的那批，不是全部，清单里会写明上限。
+读取用 `mail +triage` 拿列表（只取元数据和摘要），再用 `mail +messages` 按 `message_id` 批量取正文，两步都是 `--as user`，只用本人已有的权限，不换成机器人身份去拿更多信，也不读 `skipSenders` 里的发件人。时间范围写进 `--filter` 的 `time_range`，按北京时间显示。一次最多读 `maxMessages` 封：按 `+triage` 返回的 `page_token` 一页页往下翻，`skipSenders` 里的发件人不占名额，所以排在它们后面的邮件不会被挤掉。收满 `maxMessages` 封或翻到窗口尽头才停。只有翻到窗口尽头、一封没落下时，快照里的 `scanned.complete` 才是 `true`；收满了而后面还有邮件也算没读完，是 `false`，清单会写明还有邮件没读，不会说成“没有需要看的邮件”或“都看过了”。
 
 正文按 `bodyChars` 截断，`truncated` 标出被截断的邮件，摘要 Agent 据此写“需打开原文核实”，不会把半截正文当成全文。接口没有回来的邮件、只回来一部分正文的（`unavailable_message_ids` 非空）都算没读成：这一轮不生成快照，也不用上一次的文件冒充。
 

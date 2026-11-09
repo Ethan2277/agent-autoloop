@@ -1,6 +1,7 @@
 // What's different about each agent. Failure cases: a level of access maps to the wrong flag, full access is given unasked,
 // a retry starts a new conversation instead of going on, an error or a turn that never finished counts as an answer, a
-// program's warning is taken for its answer, a finished Claude run printed as one JSON array is read as a failure, the
+// reconnect Codex announced and got over before its turn finished fails the finished run, a program's warning is taken
+// for its answer, a finished Claude run printed as one JSON array is read as a failure, the
 // session isn't picked out, a command line's placeholder isn't filled in, or a background Codex run assumes it inherited
 // an application's browser connection. A turn that got going and then broke, or was killed before it finished, doesn't
 // say it started, so the worker runs its prompt again; one that never got going says it did, so the worker doesn't start a
@@ -296,6 +297,15 @@ test("Codex: only a finished turn's last message is its answer", () => {
   const said = (text: string) => ({ type: "item.completed", item: { type: "agent_message", text } });
   const ended = { type: "turn.completed", usage: { input_tokens: 9, cached_input_tokens: 3, output_tokens: 1 } };
   assert.deepEqual(codex.read(lines(started, warning, said("中途"), said("好了"), ended), 0, ""), {
+    session: "t",
+    text: "好了",
+    finished: true,
+    sessionUsage: { input: 9, output: 1, cached: 3 },
+  });
+  // A reconnect Codex announced and then got over (it fell back to another transport and carried on) is not how the
+  // turn ended: twelve finished runs with receipts were thrown away and redone over one of these.
+  const reconnect = { type: "error", message: "Reconnecting... 5/5 (request timed out)" };
+  assert.deepEqual(codex.read(lines(started, reconnect, said("好了"), ended), 0, ""), {
     session: "t",
     text: "好了",
     finished: true,

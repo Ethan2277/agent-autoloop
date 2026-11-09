@@ -2,7 +2,7 @@
 // it stops.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { HOME } from "./home.ts";
@@ -181,6 +181,9 @@ export function installService() {
   if (process.platform === "darwin") {
     mkdirSync(path.dirname(plistFile()), { recursive: true });
     writeFileSync(plistFile(), plist());
+    // launchd refuses to load a plist others can write, as an unhelpful "Bootstrap failed: 5"; and rewriting one a
+    // umask-0 install left world-writable keeps its mode, so the mode is set on every install.
+    chmodSync(plistFile(), 0o644);
     spawnSync("launchctl", ["bootout", `${domain()}/${label()}`], { stdio: "ignore" });
     // bootout returns before the old one is gone; loading before that fails and leaves none.
     for (let tries = 0; tries < 100 && launchdHasIt(); tries++) pause(100);
