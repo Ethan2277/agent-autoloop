@@ -124,6 +124,29 @@ test("an npm command shim preserves a multiline prompt on Windows", { skip: !win
   assert.equal(readFileSync(join(process.env.AGENT_AUTOLOOP_HOME!, "worker/runs/3-1/stdout-1.log"), "utf8"), argument);
 });
 
+// npm writes this shim for a package whose bin is a native program; Claude Code installed with npm is one.
+test("an npm command shim for a native program runs it on Windows", { skip: !windows }, async () => {
+  const bin = join(scratch, "node_modules", "native-agent", "bin");
+  mkdirSync(bin, { recursive: true });
+  copyFileSync(process.execPath, join(bin, "native-agent.exe"));
+  const agent = join(scratch, "native-agent.cjs");
+  const shim = join(scratch, "native-agent.cmd");
+  const argument = '中文 "quotes" %PATH% & echo injected\nsecond line';
+  writeFileSync(agent, "process.stdout.write(process.argv[2]);");
+  writeFileSync(
+    shim,
+    '@ECHO off\r\nSET "dp0=%~dp0"\r\n"%dp0%\\node_modules\\native-agent\\bin\\native-agent.exe"   %*\r\n',
+  );
+  waiting.push(job(9, [shim, agent, argument]));
+  const running = worker();
+  await until(
+    () => results.has(9),
+    () => running.tick(),
+  );
+  assert.equal(results.get(9).outcome, "done", JSON.stringify(results.get(9)));
+  assert.equal(readFileSync(join(process.env.AGENT_AUTOLOOP_HOME!, "worker/runs/9-1/stdout-1.log"), "utf8"), argument);
+});
+
 // where.exe prints in the console's code page; a Chinese folder name came back as a path that doesn't exist.
 test(
   "an Agent on PATH under a folder the console code page can't write is found and runs",

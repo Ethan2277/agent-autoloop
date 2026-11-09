@@ -888,6 +888,9 @@
           "type": ["integer", "null"],
           "minimum": 0
         },
+        "chosen": {
+          "type": ["string", "null"]
+        },
         "text": {
           "type": ["string", "null"]
         },
@@ -901,7 +904,7 @@
           "type": "string"
         }
       },
-      "required": ["card", "title", "options", "choice", "text", "about", "by", "at"],
+      "required": ["card", "title", "options", "choice", "chosen", "text", "about", "by", "at"],
       "additionalProperties": true
     },
     "context-timer": {

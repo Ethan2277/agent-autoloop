@@ -13,7 +13,9 @@
 // in the middle of a message loses its first half; a finished tool call between two messages with no id runs them together,
 // so a "没跑成" after it reads as work done; a line that can't be read, which an agent must not write, is passed over, so one
 // with no newline takes the answer with it and the run hangs until its time limit. A failed turn doesn't say so until the agent and its stdout are gone, which may be never; its half-written answer counts; or what the
-// agent itself said on stderr is lost from the reason. An agent with no command line doesn't say what's missing.
+// agent itself said on stderr is lost from the reason. A turn a real agent ends with no text at all, which OpenCode 1.1.2
+// does when the model it called refuses, is reported as a turn that didn't finish: it contradicts the stop reason it
+// quotes and names no cause. An agent with no command line doesn't say what's missing.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, symlinkSync } from "node:fs";
@@ -310,6 +312,20 @@ test("ACP says a turn has failed and why as soon as it has, so nothing has to wa
   }
   const talkative = acp.read(result.out, 0, `${result.err}${"它还在写日志\n".repeat(100)}`);
   assert.ok(talkative.error!.endsWith(why), "an agent that goes on talking doesn't push out the reason");
+});
+
+test("ACP says a turn came back empty, not that it failed to finish", async () => {
+  // OpenCode 1.1.2 answers end_turn with nothing said when the model it called refused the request, so the reason read
+  // "没有完成这一轮：end_turn" — contradicting the stop reason it quotes, and naming no cause at all.
+  const result = await launch(
+    "empty-answer",
+    `on['session/prompt'] = (m) => send({ id: m.id, result: { stopReason: 'end_turn' } });`,
+  );
+  assert.notEqual(result.code, 0, "a turn with no answer is not a finished turn");
+  const reading = acp.read(result.out, result.code, result.err);
+  assert.equal(reading.text, undefined);
+  assert.match(reading.error!, /没有回文字/);
+  assert.doesNotMatch(reading.error!, /没有完成这一轮/, "it did finish; it just said nothing");
 });
 
 test("ACP's reason for a failure keeps what the agent itself said", async () => {

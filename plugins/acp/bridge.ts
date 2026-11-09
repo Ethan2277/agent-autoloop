@@ -164,7 +164,10 @@ export async function bridge(turn: Turn) {
     collecting = true;
     const prompt = [{ type: "text", text: turn.prompt }];
     const result = await rpc("session/prompt", { sessionId: session, prompt });
-    if (result.stopReason !== "end_turn" || !text.trim()) throw new Error(`ACP 没有完成这一轮：${result.stopReason}`);
+    if (result.stopReason !== "end_turn") throw new Error(`ACP 没有完成这一轮：${result.stopReason}`);
+    // end_turn with nothing said is not a turn that stopped early: an agent whose model refused answers this way, and the
+    // old reason quoted "end_turn" back as if it had failed, leaving no cause to look for.
+    if (!text.trim()) throw new Error("ACP 说这一轮结束了，但没有回文字");
     console.log(JSON.stringify({ session, text, finished: true }));
   } catch (error) {
     // Now and not on the way out: the agent, or what it left holding its output, can keep this process here for good,

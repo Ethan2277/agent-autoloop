@@ -35,6 +35,7 @@ export type Job = {
       title: string;
       options: string[];
       choice: number | null;
+      chosen: string | null;
       text: string | null;
       about: string;
       by: string | null;

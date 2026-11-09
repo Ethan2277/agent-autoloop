@@ -72,7 +72,7 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 第三方仓库根目录放 `agent.ts`、`channel.ts` 或 `source.ts`，用 `agent-autoloop add <git 地址>` 安装到 `~/.agent-autoloop/plugins/<仓库名>`。仓库名转成小写就是插件名，规则的 `use` 写它；只能有小写字母、数字和 `-`，不合要求的 `add` 会拒绝。同名本机插件优先于内置插件，不自动更新。插件是可信代码，先读再装。
 
-Windows 的 `cwd` 可写 `C:/code/project`、JSON 转义后的 `C:\\code\\project`、UNC 路径或 `~/code/project`，以接单电脑为准。`command` 支持可执行文件、PowerShell 脚本和 npm 的 JS 入口包装；其他 `.bat`/`.cmd` 请换成可执行文件或 `node script.js`。Windows 按 PATH 找程序，不加载 Unix 登录 shell。
+Windows 的 `cwd` 可写 `C:/code/project`、JSON 转义后的 `C:\\code\\project`、UNC 路径或 `~/code/project`，以接单电脑为准。`command` 支持可执行文件、PowerShell 脚本和 npm 生成的 `.cmd` 包装（直接执行其 JS 入口或 `.exe`）；其他 `.bat`/`.cmd` 请换成可执行文件或 `node script.js`。Windows 按 PATH 找程序，不加载 Unix 登录 shell。
 
 一轮最长跑多久写 `timeout`，单位是分钟，默认 180。
 

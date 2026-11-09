@@ -23,7 +23,8 @@ after(async () => {
     child.kill("SIGKILL");
     await new Promise((resolve) => child.once("exit", resolve));
   }
-  for (const home of homes) rmSync(home, { recursive: true, force: true });
+  // Windows won't remove a folder a live process works in, and an agent let go just now may not have exited yet.
+  for (const home of homes) rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 const freePort = () =>
@@ -155,9 +156,19 @@ test("a channel plugin that returns at once doesn't stop the hub answering", asy
   assert.equal(it.said().split("[quick] stopped").length - 1, 1, "it waits before going again");
 });
 
-test("a worker that stops is started again, and the hub stays up", async () => {
+test("a worker that stops is started again, and the hub stays up", async (t) => {
+  // A turn that ends on its own leaves nothing in hand, and an idle worker then sits out its whole fifty-second poll
+  // before it looks at the folder again — so this one holds the turn open until the test writes `release`, and the
+  // folder breaks while a run is still in hand. The two-minute bound is only so that an assertion failing before that
+  // release cannot leave it polling for a file nobody will write.
+  const hold = `const { existsSync } = require("node:fs");
+const release = require("node:path").join(process.env.AGENT_AUTOLOOP_HOME, "release");
+const giveUp = Date.now() + 120_000;
+const look = () => (existsSync(release) || Date.now() > giveUp ? process.exit(0) : setTimeout(look, 50));
+look();`;
   const it = await install({
-    "busy/agent.ts": `export default { command: () => ["sleep", "5"], read: () => ({}) };`,
+    "busy/agent.ts": `const hold = ${JSON.stringify(hold)};
+export default { command: () => [process.execPath, "-e", hold], read: () => ({}) };`,
   });
   edit(join(it.home, "rules.json"), (rules) => {
     for (const agent of Object.values<any>(rules.agents)) {
@@ -165,6 +176,8 @@ test("a worker that stops is started again, and the hub stays up", async () => {
       delete agent.command;
     }
   });
+  // The agent outlives a stopped worker by design, so this lets it go, whether or not the test got that far.
+  t.after(() => writeFileSync(join(it.home, "release"), ""));
   const up = it.up();
   await until(() => answers(it.port), "中台应答");
   assert.equal(it.cli("emit", "try.start", "--subject", "#1").status, 0);

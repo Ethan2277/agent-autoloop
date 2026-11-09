@@ -214,7 +214,7 @@ function starterRules(agents: Record<string, object>, first: string) {
           "这是 agent-autoloop try 的试跑，不要改任何文件，不要做别的事。读资料文件。" +
           "如果 answers 是空的，就问一个问题：title 写“试跑：选一个颜色”，text 写“这是一次试跑，选哪个都行。”，" +
           'options 写 ["蓝色","绿色"]，key 写 try-color，第一行结论写“问了一个问题”。' +
-          "如果 answers 不是空的，第一行结论写“你选了某某，试跑通过”，把某某换成 answers 里选的那一项，不附回执。",
+          "如果 answers 不是空的，第一行结论写“你选了某某，试跑通过”，把某某换成 answers 里的 chosen（所选那项的文字），不附回执。",
       },
     ],
     elsewhere: [],

@@ -21,6 +21,8 @@
 // Receipt FYIs must arrive closed without buttons, stay out of later open lists, and never wake work when clicked;
 // ordinary notices, questions, quiet rules, and the one-day FYI delivery window must keep their existing behavior.
 // The why timeline must show receipt FYIs without adding empty closures or repeating hub-generated end notices.
+// The answers material carries the chosen text, or a 0-based choice gets read as the first option (issue #197: an Agent
+// reported 绿色 as 蓝色).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { at, setup } from "./helpers.ts";
@@ -110,6 +112,20 @@ test("an answer wakes the thread that asked, in its session, with what it left f
   finish(job.run, job.token, { outcome: "done", summary: "留着，已记下" }, at(3));
   assert.deepEqual([card(id).state, card(id).result], ["done", "留着，已记下"]);
   assert.equal(card(id).version, before + 1);
+});
+
+test("the answers material carries the chosen text so the 0-based choice can't be read as the first option", () => {
+  clean();
+  const { id } = asked(1);
+  answer(id, { choice: 1, by: "me" }, at(1));
+  const job = claim("w1", at(1))!;
+  assert.deepEqual([job.context.answers[0].choice, job.context.answers[0].chosen], [1, "留着"]);
+  // A free-text answer has no choice: the chosen text is the answer itself.
+  finish(job.run, job.token, { outcome: "done", ask: [question] }, at(2));
+  const second = one<{ id: number }>("SELECT id FROM cards WHERE id != ?", [id])!.id;
+  answer(second, { text: "先备份再删", by: "me" }, at(3));
+  const free = claim("w1", at(3))!;
+  assert.deepEqual([free.context.answers[0].choice, free.context.answers[0].chosen], [null, "先备份再删"]);
 });
 
 test("an answer while another run holds the thread joins the next run, and a merged run still carries it", () => {
