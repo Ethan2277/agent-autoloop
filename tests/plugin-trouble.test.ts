@@ -7,7 +7,16 @@
 // started again; losing the place the log goes makes the error about it go round for ever, with the hub no longer answering.
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -24,7 +33,13 @@ after(async () => {
     await new Promise((resolve) => child.once("exit", resolve));
   }
   // Windows won't remove a folder a live process works in, and an agent let go just now may not have exited yet.
-  for (const home of homes) rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  for (const home of homes) {
+    try {
+      rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    } finally {
+      rmSync(home + ".signals", { recursive: true, force: true });
+    }
+  }
 });
 
 const freePort = () =>
@@ -159,11 +174,14 @@ test("a channel plugin that returns at once doesn't stop the hub answering", asy
 test("a worker that stops is started again, and the hub stays up", async (t) => {
   // A turn that ends on its own leaves nothing in hand, and an idle worker then sits out its whole fifty-second poll
   // before it looks at the folder again — so this one holds the turn open until the test writes `release`, and the
-  // folder breaks while a run is still in hand. The two-minute bound is only so that an assertion failing before that
+  // folder breaks only once it says it has started. The two-minute bound is only so that an assertion failing before that
   // release cannot leave it polling for a file nobody will write.
-  const hold = `const { existsSync } = require("node:fs");
-const release = require("node:path").join(process.env.AGENT_AUTOLOOP_HOME, "release");
+  const hold = `const { existsSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const signals = process.env.AGENT_AUTOLOOP_HOME + ".signals";
+const release = join(signals, "release");
 const giveUp = Date.now() + 120_000;
+try { writeFileSync(join(signals, "started"), ""); } catch {}
 const look = () => (existsSync(release) || Date.now() > giveUp ? process.exit(0) : setTimeout(look, 50));
 look();`;
   const it = await install({
@@ -176,8 +194,12 @@ export default { command: () => [process.execPath, "-e", hold], read: () => ({})
       delete agent.command;
     }
   });
+  // Beside the home, not in it: the cleanup removes the home, and on Windows a signal inside goes first, leaving the agent
+  // holding the folder until its two-minute bound. The agent only writes here, so one that exits late leaves nothing behind.
+  const signals = it.home + ".signals";
+  mkdirSync(signals);
   // The agent outlives a stopped worker by design, so this lets it go, whether or not the test got that far.
-  t.after(() => writeFileSync(join(it.home, "release"), ""));
+  t.after(() => writeFileSync(join(signals, "release"), ""));
   const up = it.up();
   await until(() => answers(it.port), "中台应答");
   assert.equal(it.cli("emit", "try.start", "--subject", "#1").status, 0);
@@ -185,6 +207,8 @@ export default { command: () => [process.execPath, "-e", hold], read: () => ({})
   // Started and not just about to: one that can't write to its folder while starting counts as the hub being out of reach,
   // and that waits 30 seconds before the next round.
   await until(() => it.said().includes("turn 1 started"), "这一轮开始");
+  // The log says so before the launch is through, and on Windows that takes ten times as long as the step below.
+  await until(() => existsSync(join(signals, "started")), "Agent 起来了");
   // With a run in hand it comes round every second, and something in the way of its folder stops the next round.
   rmSync(runs, { recursive: true, force: true });
   writeFileSync(runs, "");
