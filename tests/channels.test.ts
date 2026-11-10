@@ -6,6 +6,7 @@
 // replacement tokens in card text rewrite a webhook template. A settled card Feishu won't let the bot change stays at the
 // version before the answer; an open one is sent again with buttons that don't count.
 // A slow CLI call must not block the hub's HTTP loop while looking up a user, sending or updating a card.
+// An ask card that only takes choices loses the account someone would type; words without a choice must still answer.
 // A U+2028 or U+2029 in what someone typed, which JSON leaves as it is, cuts the click's line and loses the click.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
@@ -59,6 +60,13 @@ test("a card shows its options while it's open, and what became of it after", ()
   assert.ok(
     noticeOpen.includes('"form_action_type":"submit"'),
     "the way a Feishu 2.0 card marks a form's submit button",
+  );
+  const askOpen = JSON.stringify(render(base).body.elements);
+  assert.ok(askOpen.includes("ask_text_submit_5"), "an ask card can take words too, not only a choice");
+  assert.ok(askOpen.includes('"name":"note"'), "the ask form's field has a name, so its words come back");
+  assert.ok(
+    !said({ ...base, state: "decided", choice: 1 }).includes('"tag":"form"'),
+    "a settled ask card has no form left to submit",
   );
   assert.match(
     said({ ...base, kind: "notice", state: "closed", options: [], result: "已处理", answer: "清了 3GB" }),
@@ -297,6 +305,53 @@ esac
       ["answer", 7, { choice: 0, by: "ou_me", ref: "om_7" }],
     ],
     "a submitted note and a plain click both count, the click with no empty text",
+  );
+});
+
+test("feishu: an ask card's text form answers with the words and no choice", async () => {
+  const log = join(dir, "lark-free.log");
+  const lark = join(dir, "lark-cli-free");
+  // A free-text submit has no choice: the words are the answer, and an empty one answers nothing.
+  writeFileSync(
+    lark,
+    `#!/bin/sh
+echo "$*" >> "${log}"
+case "$*" in
+  *"event consume"*)
+    echo '{"action_name":"ask_text_submit_7","action_tag":"button","action_value":"","form_value":"{\\"note\\":\\"账号 test-ops 密码 s3cret\\"}","operator_id":"ou_me","message_id":"om_7"}'
+    echo '{"action_name":"ask_text_submit_7","action_tag":"button","action_value":"","form_value":"{\\"note\\":\\"   \\"}","operator_id":"ou_me","message_id":"om_7"}'
+    exec sleep 30 ;;
+  *) cat > /dev/null; echo '{"ok":true,"data":{"message_id":"om_7"}}' ;;
+esac
+`,
+  );
+  chmodSync(lark, 0o755);
+  const stop = new AbortController();
+  const cards: (Card | null)[] = [{ ...base, id: 7, ref: "om_7" }];
+  const calls: unknown[][] = [];
+  const hub = {
+    async nextCard() {
+      if (cards.length) return { card: cards.shift()! };
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      stop.abort();
+      return { card: null };
+    },
+    async delivered() {
+      return {};
+    },
+    async failed() {
+      return {};
+    },
+    async answer(...args: unknown[]) {
+      calls.push(["answer", ...args]);
+      return { changed: true };
+    },
+  };
+  await feishu({ hub: hub as any, options: { user: "ou_me", lark }, log: () => {}, signal: stop.signal });
+  assert.deepEqual(
+    calls.filter((c) => c[0] === "answer"),
+    [["answer", 7, { by: "ou_me", ref: "om_7", text: "账号 test-ops 密码 s3cret" }]],
+    "the words count without a choice, and an empty submit doesn't answer",
   );
 });
 
