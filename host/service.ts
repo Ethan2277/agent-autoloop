@@ -53,9 +53,9 @@ export const startupInstead = () =>
   startupShortcut();
 
 function installWindowsService() {
-  removeService();
-  stopUp();
   const { program, args, directory } = windowsLauncher();
+  // Registering with -Force replaces the task in place, so the old one and the hub it runs are left alone until Windows
+  // has taken the new one: a registration it refuses must not leave the person with no hub.
   try {
     powershell(`
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -64,13 +64,16 @@ function installWindowsService() {
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskName ${psQuote(label())} -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-    Start-ScheduledTask -TaskName ${psQuote(label())}
   `);
   } catch (error) {
     // The built-in Administrator with UAC on can't make any task without elevating, however the task is written.
     if (!String((error as { stderr?: string }).stderr ?? error).includes("0x80070005")) throw error;
     throw new Error(`Windows 不让这个账号建登录任务（拒绝访问）。${startupInstead()}`);
   }
+  // Stopping the task ends wscript, not the hub it started; that one, or one started by hand, is stopped after it.
+  powershell(`$task = ${task()}; if ($task.State -eq 'Running') { $task | Stop-ScheduledTask }`);
+  stopUp();
+  powershell(`Start-ScheduledTask -TaskName ${psQuote(label())}`);
 }
 
 /**
