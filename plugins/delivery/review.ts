@@ -4,11 +4,13 @@ import { commandLine } from "../../host/command.ts";
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { git, matches, PLAIN_FILE_MODES, type Settings } from "./project.ts";
+import { AGENT, git, matches, PLAIN_FILE_MODES, type Reviewer, type Settings } from "./project.ts";
 import { IN_THE_APP } from "../codex/agent.ts";
 import { findProgram } from "../../worker/agents.ts";
 
 export type Finding = { title: string; text: string };
+/** What a review found, or the agent whose change the project's settings let through without one. */
+export type Reviewed = Finding[] | { exempt: string };
 
 export function parseReview(text: string): Finding[] {
   const value = JSON.parse(text);
@@ -24,7 +26,7 @@ export function parseReview(text: string): Finding[] {
   return value.findings;
 }
 
-export function codexCommand(output: string, effort: string) {
+export function codexCommand(output: string, effort: string, model = "gpt-6.1-sol") {
   return [
     "exec",
     "--ignore-user-config",
@@ -35,7 +37,7 @@ export function codexCommand(output: string, effort: string) {
     "--sandbox",
     "read-only",
     "-m",
-    "gpt-6.1-sol",
+    model,
     "-c",
     `model_reasoning_effort="${effort}"`,
     "-c",
@@ -50,7 +52,67 @@ export function codexCommand(output: string, effort: string) {
   ];
 }
 
-export async function reviewSnapshot(bare: string, snapshot: string, main: string, head: string, config: Settings) {
+const BELOW_XHIGH = ["none", "minimal", "low", "medium", "high"];
+/** The depth a review runs at: the reviewer's own, and no less than xhigh on a path the project reviews in depth. */
+export const depth = (configured = "high", inDepth: boolean) =>
+  inDepth && BELOW_XHIGH.includes(configured) ? "xhigh" : configured;
+
+/** The parent a clean sync with main left the branch's work on. A merge that changed anything, or of another branch, is the author's. */
+function beforeSync(bare: string, main: string, head: string) {
+  const show = [
+    "--format=%P",
+    "--name-only",
+    "--diff-merges=remerge",
+    "--no-renames",
+    "--no-ext-diff",
+    "--no-textconv",
+  ];
+  const [parents, ...changed] = git(bare, "show", ...show, head, "--").split("\n");
+  const [own, merged, ...more] = parents.split(" ");
+  if (!merged || more.length || changed.some(Boolean)) return null;
+  try {
+    git(bare, "merge-base", "--is-ancestor", merged, main);
+  } catch {
+    return null;
+  }
+  return own;
+}
+
+/** The agent a trusted account declared this pull request's change to be by, as a commit status: on this commit, or on
+ * the one a clean sync with main left it on. What the author added since has no declaration. As GitHub reads statuses,
+ * the newest one of a context stands: a later one that isn't a success takes the declaration back. */
+export function declaredAgent(
+  bare: string,
+  main: string,
+  head: string,
+  number: number,
+  trusted: number[],
+  statuses: (sha: string) => any[],
+) {
+  for (let sha: string | null = head; sha; sha = beforeSync(bare, main, sha)) {
+    const latest = statuses(sha).find(
+      (status) => status.context === `delivery-agent/${number}` && trusted.includes(status.creator?.id),
+    );
+    if (latest) return latest.state === "success" && AGENT.test(latest.description ?? "") ? latest.description : null;
+  }
+  return null;
+}
+
+/** Who reviews a change by `agent`, null for nobody. A change nobody declared, an agent the project doesn't list, and an
+ * exempt one whose review is required all go to the project's default reviewer. */
+function reviewerFor(review: Settings["review"], agent: string | null, required: boolean): Reviewer | null {
+  const listed = agent !== null && Object.hasOwn(review.agents, agent) ? review.agents[agent] : undefined;
+  return listed === undefined || (listed === null && required) ? { command: review.command } : listed;
+}
+
+export async function reviewSnapshot(
+  bare: string,
+  snapshot: string,
+  main: string,
+  head: string,
+  config: Settings,
+  source: { agent: string | null; required: boolean } = { agent: null, required: false },
+): Promise<Reviewed> {
   // Git can't show what a merge of three or more parents brought: neither its paths nor its diff would reach the reviewer.
   if (git(bare, "rev-list", "--min-parents=3", head, "--not", main)) {
     return [
@@ -62,8 +124,9 @@ export async function reviewSnapshot(bare: string, snapshot: string, main: strin
   }
   // No checkout: hooks, filters, AGENTS.md and program/config files from the PR never become executable inputs here.
   const branchLog = ["--diff-merges=remerge", "--no-renames"];
-  const paths = git(bare, "log", ...branchLog, "--format=", "--name-only", head, "--not", main)
-    .split("\n")
+  // -z: otherwise Git prints a name with a quote or a backslash in it quoted, and it matches no pattern.
+  const paths = git(bare, "log", ...branchLog, "--format=", "--name-only", "-z", head, "--not", main)
+    .split("\0")
     .filter(Boolean);
   if (!paths.length) return [];
   const raw = git(bare, "log", ...branchLog, "--format=", "--raw", head, "--not", main);
@@ -76,6 +139,9 @@ export async function reviewSnapshot(bare: string, snapshot: string, main: strin
       return plain && matches(path, config.internal);
     });
   if (internalOnly) return [];
+  const inDepth = paths.some((path) => matches(path, config.review.xhigh));
+  const reviewer = reviewerFor(config.review, source.agent, inDepth || source.required);
+  if (!reviewer) return { exempt: source.agent! };
   const commits = git(bare, "rev-list", head, "--not", main).split("\n").filter(Boolean);
   const diff = commits
     .map((sha) => git(bare, "show", "--remerge-diff", "--no-renames", "--no-ext-diff", "--no-textconv", sha, "--"))
@@ -92,10 +158,10 @@ export async function reviewSnapshot(bare: string, snapshot: string, main: strin
     "只报告会导致结果错误、数据损失、权限或发布事故的问题。合并 main 带入的改动已排除，手动解决冲突的改动保留。\n\n" +
     `main 上的审查要求：\n${points}\n\n` +
     '只返回 JSON：{"findings":[{"title":"文件:行号和问题","text":"触发条件和后果"}]}。没有问题返回 {"findings":[]}。';
-  const level = paths.some((path) => matches(path, config.review.xhigh)) ? "xhigh" : "high";
   const output = join(snapshot, "review.json");
-  const { command } = config.review;
-  const argv = command ?? [findProgram("codex", () => IN_THE_APP), ...codexCommand(output, level)];
+  const { command, model, effort } = reviewer;
+  const codex = () => [findProgram("codex", () => IN_THE_APP), ...codexCommand(output, depth(effort, inDepth), model)];
+  const argv = command ?? codex();
   const args = argv.slice(1).map((arg) => arg.replaceAll("{input}", changesFile));
   const child = execFile(...commandLine([argv[0], ...args]), {
     cwd: snapshot,

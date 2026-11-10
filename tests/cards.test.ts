@@ -17,7 +17,9 @@
 // sources is given, or closes, cards that have no source. A channel that takes a card and never reports gets it for ever.
 // A card closed while its first message is on the way never gets that message updated.
 // A rule that lists its channels has its cards, and the notices of its runs, sent to others as well; one that lists none
-// stops reaching every channel; a notice of nobody's rule reaches only some.
+// stops reaching every channel; a notice of nobody's rule reaches only some. With defaultChannels, a card that names no
+// channels of its own (a tell, the hub's own alert, a task elsewhere asking, a rule without a list) still reaches every
+// channel, so several channels each repeat it (issue #221); and a rule that lists its own is held to the default.
 // Receipt FYIs must arrive closed without buttons, stay out of later open lists, and never wake work when clicked;
 // ordinary notices, questions, quiet rules, and the one-day FYI delivery window must keep their existing behavior.
 // The why timeline must show receipt FYIs without adding empty closures or repeating hub-generated end notices.
@@ -470,6 +472,36 @@ test("a rule that lists channels has its cards go only there; one that lists non
   const { id } = asked(2);
   assert.equal(nextCard("chat", at(1))?.id, id, "without a list, every channel gets it");
   assert.equal(nextCard("plain", at(1))?.id, id);
+});
+
+test("defaultChannels takes every card that names no channels of its own; a rule's own list still wins", () => {
+  clean();
+  underRules(
+    (rules) => {
+      rules.defaultChannels = ["plain"];
+      rules.rules.find((rule: { name: string }) => rule.name === "意见").channels = ["chat"];
+    },
+    () => {
+      const told = tell("source:app:k", "应用", "只说一次", at(1)).card;
+      assert.equal(nextCard("chat", at(1)), null, "a tell isn't repeated on chat");
+      assert.equal(nextCard("plain", at(1))?.id, told);
+      delivered("plain", told, 1, "p_1", at(1));
+      const { id } = asked(1);
+      assert.equal(nextCard("chat", at(2))?.id, id, "the rule's own list, not the default");
+      assert.equal(nextCard("plain", at(2)), null);
+    },
+  );
+  clean();
+  underRules(
+    (rules) => {
+      rules.defaultChannels = ["plain"];
+    },
+    () => {
+      const { id } = asked(2);
+      assert.equal(nextCard("chat", at(1)), null, "a rule without a list goes where the default says");
+      assert.equal(nextCard("plain", at(1))?.id, id);
+    },
+  );
 });
 
 test("a failed send is retried further and further apart, then given up within the hour; a channel that never came hasn't failed", () => {

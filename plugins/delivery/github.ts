@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import type { DeliveryIO } from "./delivery.ts";
 import { git, liveRelease, releaseRequired, REPO } from "./project.ts";
-import { reviewSnapshot } from "./review.ts";
+import { declaredAgent, reviewSnapshot } from "./review.ts";
 
 const LONGEST_WAIT = 1800000;
 
@@ -60,7 +60,13 @@ export function createIO(repo: string, folder: string): DeliveryIO {
     api,
     async review(pr, config, main) {
       fetchObjects(main, pr.head.sha);
-      return reviewSnapshot(bare, join(folder, `review-${pr.head.sha}`), main, pr.head.sha, config);
+      const { agents, trusted } = config.review;
+      const statuses = (sha: string) => pages(repo, `commits/${sha}/statuses?per_page=100`);
+      const source = {
+        agent: Object.keys(agents).length ? declaredAgent(bare, main, pr.head.sha, pr.number, trusted, statuses) : null,
+        required: pr.labels.some((label: any) => label.name === "deliver-review"),
+      };
+      return reviewSnapshot(bare, join(folder, `review-${pr.head.sha}`), main, pr.head.sha, config, source);
     },
     async merge(pr, config) {
       if (config.admin_merge.includes(pr.user.login)) {

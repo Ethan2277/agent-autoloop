@@ -54,7 +54,7 @@ function publish(words: string, tag?: string) {
 const versions: Record<string, string> = {};
 for (const tag of ["v1.2.0", "v1.9.0", "v1.10.0"]) versions[tag] = publish(tag, tag);
 publish("a test tag", "v2.0.0-rc1");
-publish("an old marker", "pre-public-delete-20261203");
+publish("a non-release tag", "local-backup");
 const tip = publish("main, not released");
 
 let copies = 0;

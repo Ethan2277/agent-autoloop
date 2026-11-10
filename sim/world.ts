@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { decide, type Input } from "../kernel/decide.ts";
-import { empty, evolve, rows, snapshot, View, type Fact } from "../kernel/evolve.ts";
+import { empty, evolve, rows, snapshot, type Fact } from "../kernel/evolve.ts";
 import { parseRules } from "../protocol/rules.ts";
 import { credential } from "../kernel/credentials.ts";
 import { invariants } from "./invariants.ts";

@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { after, test } from "node:test";
 import { at, setup } from "./helpers.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "agent-autoloop-elsewhere-ask-"));

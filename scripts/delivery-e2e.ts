@@ -3,7 +3,7 @@
 // This opt-in test creates and deletes exactly the named private repository, using the existing gh/Codex logins.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { tmpdir, cpus } from "node:os";

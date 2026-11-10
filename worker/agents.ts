@@ -4,7 +4,6 @@
 // rules.json.
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import path from "node:path";
 import { findOnPath } from "../host/command.ts";
 import { loadPlugin } from "../host/plugins.ts";
 import type { Usage } from "../protocol/validate.ts";

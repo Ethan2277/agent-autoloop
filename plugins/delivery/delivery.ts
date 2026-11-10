@@ -1,11 +1,11 @@
 // One pull request from label to live: review, full check, merge, Ship, health. Every step reads GitHub's state back
 // rather than trusting its own last response, and a failure is left for the hub's retry to pick up where it stands.
 import { settings, type Live, type Settings } from "./project.ts";
-import type { Finding } from "./review.ts";
+import type { Finding, Reviewed } from "./review.ts";
 
 export type DeliveryIO = {
   api(path: string, body?: any, method?: string): Promise<any>;
-  review(pr: any, config: Settings, main: string): Promise<Finding[]>;
+  review(pr: any, config: Settings, main: string): Promise<Reviewed>;
   merge(pr: any, config: Settings): Promise<void>;
   disableAuto(number: number): Promise<void>;
   contains(base: string, head: string): Promise<boolean>;
@@ -162,7 +162,9 @@ export async function deliver(
     }
     // The settings of the main this round is against: a newer one may add the health check its release has to pass.
     config = await settingsAt(base);
-    const findings = await io.review(pr, config, base);
+    const reviewed = await io.review(pr, config, base);
+    const exempt = Array.isArray(reviewed) ? null : reviewed.exempt;
+    const findings = Array.isArray(reviewed) ? reviewed : [];
     const current = await io.api(`pulls/${number}`);
     if (current.merged_at) {
       pr = current;
@@ -176,7 +178,10 @@ export async function deliver(
       return { summary: "审查发现问题，尚未合并", findings, head };
     }
     if (labels(current).has("deliver-review")) {
-      return reviewOnly(current);
+      if (!exempt) return reviewOnly(current);
+      // Asked for after this round let the change through without a review: the next round reviews it.
+      pr = current;
+      continue;
     }
     let after = 0;
     if (current.draft) {
@@ -199,12 +204,16 @@ export async function deliver(
         await status(io, head, "delivery", "success", "交付标记已撤回，未合并或发布");
         return { summary: "交付标记已撤回" };
       }
-      if (labels(pr).has("deliver-review")) return reviewOnly(pr);
+      if (labels(pr).has("deliver-review")) {
+        if (!exempt) return reviewOnly(pr);
+        continue;
+      }
       if ((await io.api("git/ref/heads/main")).object.sha !== base) {
         if (round < 3) continue;
         throw new Error("main 已前进，稍后重新同步和检查");
       }
-      await status(io, head, config.review.status, "success", "此提交审查通过，完整检查通过");
+      const passed = exempt ? `${exempt} 写的改动按项目设置免审` : "此提交审查通过";
+      await status(io, head, config.review.status, "success", `${passed}，完整检查通过`);
       try {
         await io.merge(pr, config);
       } catch (error) {

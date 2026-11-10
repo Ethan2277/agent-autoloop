@@ -48,6 +48,7 @@ export function explainRules(text: string, now = Date.now(), zone = localZone())
         })
         .join("、")}`,
     );
+  if (rules.defaultChannels) lines.push(`没写 channels 的卡片和通知默认只发 ${rules.defaultChannels.join("、")}`);
   lines.push("规则：");
   for (const rule of rules.rules) lines.push(`  ${rule.name}：${details(rule, rules, now)}`);
   for (const task of rules.elsewhere) {

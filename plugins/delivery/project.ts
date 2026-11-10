@@ -8,12 +8,24 @@ export type Settings = {
   admin_merge: string[];
   check: { workflow: string; job: string };
   ship: { workflow: string };
-  review: { points: string; xhigh: string[]; status: string; command?: string[] };
+  review: {
+    points: string;
+    xhigh: string[];
+    status: string;
+    command?: string[];
+    /** Who reviews what each agent wrote; null for nobody. */
+    agents: Record<string, Reviewer | null>;
+    /** The GitHub accounts, by id, whose word on which agent wrote a change counts. */
+    trusted: number[];
+  };
   health?: { url: string; require: Record<string, unknown>; field: string; pattern: string };
 };
+/** The built-in Codex review with this model and depth, or a command in its place. */
+export type Reviewer = { model?: string; effort?: string; command?: string[] };
 export type Live = { sha: string; release: string };
 
 export const REPO = /^[\w.-]+\/[\w.-]+$/;
+export const AGENT = /^[a-z][a-z0-9-]{0,31}$/;
 /** A file that isn't executable or a link, or isn't there: only such a change can be left out of a review or a release. */
 export const PLAIN_FILE_MODES = ["000000", "100644"];
 const SETTINGS_KEYS = ["repo", "internal", "admin_merge", "check", "ship", "review", "health"];
@@ -21,6 +33,17 @@ const isWords = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((word) => typeof word === "string" && word.length > 0);
 const isPaths = (value: unknown) =>
   isWords(value) && value.every((path) => !path.startsWith("/") && !path.split("/").includes(".."));
+/** A model and a depth go onto Codex's command line: neither may read as an option. */
+function isReviewer(value: any) {
+  if (value === null) return true;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  const { model, effort, command, ...unknown } = value;
+  if (Object.keys(unknown).length) return false;
+  if (command !== undefined)
+    return model === undefined && effort === undefined && isWords(command) && command.length > 0;
+  const named = model === undefined || (typeof model === "string" && /^[A-Za-z0-9][\w.-]*$/.test(model));
+  return named && (effort === undefined || (typeof effort === "string" && /^[a-z]+$/.test(effort)));
+}
 /** Settings may write a named group the way Python does; JavaScript only reads the other way. */
 const jsPattern = (pattern: string) => pattern.replace("(?P<sha>", "(?<sha>");
 
@@ -34,6 +57,12 @@ export function settings(value: any, testLocalHealth = false): Settings {
   if (!review || !isPaths([review.points]) || (review.xhigh !== undefined && !isPaths(review.xhigh))) bad();
   if (review.command !== undefined && (!isWords(review.command) || !review.command.length)) bad();
   if (review.status !== undefined && (typeof review.status !== "string" || !review.status.trim())) bad();
+  const { agents = {}, trusted = [] } = review;
+  if (!agents || typeof agents !== "object" || Array.isArray(agents)) bad();
+  if (!Object.entries(agents).every(([name, reviewer]) => AGENT.test(name) && isReviewer(reviewer))) bad();
+  if (!Array.isArray(trusted) || !trusted.every((id) => Number.isSafeInteger(id) && id > 0)) bad();
+  // Anyone who can write a commit status, a workflow of the PR's own included, could otherwise name its agent.
+  if (Object.keys(agents).length && !trusted.length) bad();
   if (value.admin_merge !== undefined && !isWords(value.admin_merge)) bad();
   for (const workflow of [value.check?.workflow, value.ship?.workflow]) {
     if (workflow !== undefined && !/^[\w.-]+\.ya?ml$/.test(workflow)) bad();
@@ -55,7 +84,7 @@ export function settings(value: any, testLocalHealth = false): Settings {
     admin_merge: value.admin_merge ?? [],
     check: { workflow: "check.yml", job: "check", ...value.check },
     ship: { workflow: "ship.yml", ...value.ship },
-    review: { xhigh: [], status: "agent-review", ...review },
+    review: { xhigh: [], status: "agent-review", ...review, agents, trusted },
     ...(health && { health: { require: {}, ...health } }),
   };
 }

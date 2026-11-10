@@ -62,6 +62,7 @@
     },
   },
   "channels": { "feishu": { "name": "飞书", "answerers": ["ou_xxx"] } },
+  "defaultChannels": ["feishu"], // 可选：自己没写 channels 的卡片和通知（tell、中台自己的告警、别处定时任务的提问、没写 channels 的规则）只发到这几个通道，不写就发到所有通道
   "rules": [
     {
       "name": "处理告警",
@@ -75,7 +76,7 @@
       "resume": true, // 同一事项的新事件接着上一轮的会话，默认每次开新会话
       "tell": "needed", // always 每轮做成都发（没事可做、没跑成不发）/ needed 只在有卡片时（默认）/ never 只压住回执里的通知，提问和中台自己的告警照发
       "emits": { "source": "shop", "types": ["pr.*"] }, // 回执里能发什么事件，不写就不能发
-      "channels": ["feishu"], // 这条规则的卡片和通知只发到这几个通道，不写就发到所有通道
+      "channels": ["feishu"], // 这条规则的卡片和通知只发到这几个通道，不写就照 defaultChannels
     },
   ],
   "elsewhere": [
@@ -436,7 +437,7 @@ Webhook 通道的 `config.json` 配置使用 `use: "webhook"`、`url` 和 `platf
 
 ## 业务场景模板
 
-`examples/recipes/` 提供七套场景。反馈处理、网站巡检和飞书周报与业务摘要默认使用飞书本人私聊与 `Asia/Shanghai`；都是规则、通道和 `command` 的组合。
+可直接启用的场景及配置说明见 [README](../README.md#拿来即用的场景模板)。
 
 反馈来源只负责唤醒同一事项，当前业务状态和授权从可信接口重新读取。网站检查以本规则未关闭的异常通知卡片作为故障记录：首次失败发通知及排查事件，持续失败安静，恢复结案并发恢复事件；手动关闭未恢复卡片后仍失败会重新报告。飞书采集完整读取后写私有快照并发事件，摘要核对快照编号，旧事件不使用新资料；采集与摘要同组串行。只有本人身份可读的数据参与汇总，不把不可见当成未提交。
 
@@ -488,7 +489,7 @@ Apple M5 Pro、24 GB、Node 24.21.0，用 `node scripts/history.ts 1000 10000 10
 
 ## 交付插件
 
-交付是 `plugins/delivery` 的普通 Agent 进程，内核不认识它。项目仍用 `ops/delivery.json`，标签仍是 `deliver`、`deliver-attended`、`deliver-review`、`ask-owner`，提交状态仍为 `delivery`。审查状态默认 `agent-review`，由 `review.status` 修改；命令由 `review.command` 修改。设置格式、规则与 Ship 示例见[配置手册](../skills/agent-autoloop/SKILL.md#交付流水线)。
+交付是 `plugins/delivery` 的普通 Agent 进程，内核不认识它。项目仍用 `ops/delivery.json`，标签仍是 `deliver`、`deliver-attended`、`deliver-review`、`ask-owner`，提交状态仍为 `delivery`。审查状态默认 `agent-review`，由 `review.status` 修改；命令由 `review.command` 修改；`review.agents` 按写代码的 Agent 另指定审查器或免审。设置格式、规则与 Ship 示例见[配置手册](../skills/agent-autoloop/SKILL.md#交付流水线)。
 
 来源只给事件，仓库与执行命令由中台规则固定。内置 `poll.ts` 读取待处理标签，以“仓库、事项、标签记录、当前提交”生成稳定事件编号，不另存游标；某个事项读不到标签记录时这一段记 0，不影响其他事项。无标签（已合并的也一样）、关闭且未合并、fork 或非 main 目标不启动交付。每个 PR 一个事项，并发由规则 `parallel` 和接单程序容量控制；进程失败使用中台的 5 分钟起重试和连续失败通知，不另建队列、槽位、失败计数或通知服务。
 
@@ -498,6 +499,7 @@ Apple M5 Pro、24 GB、Node 24.21.0，用 `node scripts/history.ts 1000 10000 10
 | 同步               | PR 已包含 main；缺少时请求 GitHub 同步，在本轮内等到同步后的提交出现再继续，15 分钟内没出现才结束这一轮，由中台重试                                                                                                                                   |
 | 审查               | 裸 Git 对象转文字差异；只审分支自己的提交，排除干净合入 main 的变化，保留冲突解决；普通内部文档可略过模型；分支里有三个及以上父提交的章鱼合并时，审查看不到它带来的改动，直接报问题，要求改成普通合并                                                 |
 | 审查进程           | 不检出 PR，不执行其中的代码、测试、设置或 hooks；默认 Codex 忽略用户配置和记忆，只读独立快照                                                                                                                                                          |
+| 审查器             | 默认是内置 Codex 或 `review.command`；`review.agents` 列出的 Agent 写的改动改用给它指定的：内置 Codex 的模型和深度、一条命令，或免审                                                                                                                  |
 | 完整检查           | 草稿先转 ready，转之前记下最新一次检查，只接受比它新的（工作流触发类型要带 `ready_for_review`）；只接受当前提交最新一次 pull_request 工作流和指定 job 都完成且成功，草稿或 skipped job 不算；矩阵 job（名字像 `check (ubuntu-latest)`）每一项都要成功 |
 | 合并               | 再读 PR head、目标分支、main 和标签；head 变化或目标分支不再是 main 就结束这一轮，由中台重试；main 前进就在本轮回到同步，最多 3 轮；检查通过后才写可配置的审查状态，按已审查 SHA 合并                                                                 |
 | 自动合并与响应丢失 | 先关闭已有自动合并并读回确认；合并响应丢失先看是否已经合并，不盲目再提交；清标签失败也读回确认是否已移除；已合并的 PR 最后去掉 `deliver`，没合并的最后去掉 `deliver-review`，只去掉一部分时重试能接着做完，也不会把只审查的 PR 合并                   |
@@ -505,6 +507,8 @@ Apple M5 Pro、24 GB、Node 24.21.0，用 `node scripts/history.ts 1000 10000 10
 | 后续发布           | 新版覆盖且确实上线可以完成旧交付；已经完成的交付不因后来的失败发布倒退                                                                                                                                                                                |
 
 `deliver-review` 审查通过就结束并移除交付标签，不代表已检查、合并或上线；在等待检查期间加上这个标签，合并前也会停在只审查，不写允许合并的审查状态。审查发现问题时 `delivery` 和审查状态都写 failure，交回问题；通知卡片按提交分开，上一张没关也不会吞掉新提交的问题；`deliver-attended` 不额外产生通知卡片。审查状态是 failure 的提交，标签还留着时再来事件也不再审查、不改状态，这一轮直接结束，要推新提交才会重审；这条记录看审查状态，因为失败的一轮会把错误写到 `delivery` 上。等待检查期间撤回 `deliver`，这一轮结束，`delivery` 写 success，说明里写明已撤回、未合并或发布。普通 issue 的 `ask-owner` 只将可读正文变成问题卡片，去掉代码块和本机路径，答复后移除标签。不向 GitHub 发评论，不建立 PR 说明里的多轮审查账本，也不支持用“已处理”文字豁免发现的问题；新提交重新审查。
+
+改动是哪个 Agent 写的，只认提交状态 `delivery-agent/<PR 编号>`：状态是 success，说明里是 Agent 名字，写它的 GitHub 账号在 main 的 `review.trusted` 里。声明跟着提交走：干净同步 main 产生的合并沿用原提交的声明，之后的新提交、手动解决的冲突、合并别的分支都没有声明。同一个提交上以可信账号最新写的那条为准，再写一条不是 success 的就是撤回。没声明或 Agent 没列出的走默认审查。免审的改动碰到 `review.xhigh` 的路径或带 `deliver-review` 时照样走默认审查，等检查期间才加上 `deliver-review` 的也先审完再停；内置 Codex 在 `review.xhigh` 的路径上深度不低于 `xhigh`。免审合并的提交，审查状态写明是按项目设置免审，不写成审查通过。列了 `agents` 却没有 `trusted` 的设置不接受。每个 Agent 只对应一个审查器，不做多个审查器会审。
 
 带 `deliver` 标签的已合并 PR 直接继续跟踪 Ship 和健康检查，标签已去掉的不再跟踪、不写状态；审查期间被别人合并的也接着跟踪；跟踪失败时这一轮写“没跑成”，由中台照常重试。默认最多跟踪 30 分钟，超时交给中台重试；没有健康设置的项目明确报告只完成合并。发布范围对比**健康版本到目标提交的整个差异**：只有普通内部文档变化可跳过，可执行位、符号链接、重命名到外部路径、未知历史都要求发布；后来只有文档变化不能让尚未完成的代码发布被跳过。健康接口报短提交号时先向 GitHub 换成完整号，换不到就算要发布。
 

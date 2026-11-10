@@ -13,7 +13,9 @@
 // matches the required name, so a passed check waits forever; a PR retargeted during checks is merged into the other branch; a
 // delivery withdrawn during checks leaves its status pending for good; a status write failing right after findings closes the
 // commit to further reviews with nobody told what they found; labels that only partly come off leave a merged PR stuck as failed
-// with no marker for the retry to go by, or leave a review-only PR looking like a full delivery that the retry then merges.
+// with no marker for the retry to go by, or leave a review-only PR looking like a full delivery that the retry then merges;
+// a change merged without a review, by its agent's exemption, is attested as reviewed, or passes as reviewed when a review
+// is asked for while it waits for its check.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { deliver, fullCheck, waitLive, disableAuto, type DeliveryIO } from "../plugins/delivery/delivery.ts";
@@ -126,6 +128,14 @@ test("review, full check, exact-head attestation, merge, Ship and health all fin
     state.statuses.some((s: any) => s.path === "statuses/head" && s.context === "my-review" && s.state === "success"),
   );
   assert.ok(state.statuses.some((s: any) => s.context === "delivery" && s.state === "success"));
+});
+test("a change exempt from review merges with an attestation that says so", async () => {
+  const { io, state } = fixture();
+  io.review = async () => ({ exempt: "codex" });
+  assert.equal((await deliver("example/app", 1, io)).merged, "merged");
+  const attested = state.statuses.find((s: any) => s.context === "my-review");
+  assert.equal(attested.state, "success");
+  assert.match(attested.description, /codex.*免审/);
 });
 test("a missing label or closed PR launches nothing; forks are refused", async () => {
   for (const change of [{ labels: [] }, { state: "closed" }]) {
@@ -390,6 +400,23 @@ test("review-only added during checks stops before the merge attestation", async
   assert.equal((await deliver("example/app", 1, io)).reviewOnly, true);
   assert.equal(state.merges, 0);
   assert.ok(!state.statuses.some((s: any) => s.context === "my-review"));
+});
+test("review-only added while an exempt change waits for its check gets it reviewed, not called reviewed", async () => {
+  const { io, state } = fixture();
+  const api = io.api;
+  io.api = async (...args) => {
+    if (args[0].startsWith("actions/workflows/check.yml"))
+      state.pr.labels = [{ name: "deliver" }, { name: "deliver-review" }];
+    return api(...args);
+  };
+  const asked: boolean[] = [];
+  io.review = async (pr) => {
+    asked.push(pr.labels.some((label: any) => label.name === "deliver-review"));
+    return asked.at(-1) ? [] : { exempt: "codex" };
+  };
+  assert.equal((await deliver("example/app", 1, io)).reviewOnly, true);
+  assert.deepEqual(asked, [false, true]);
+  assert.equal(state.merges, 0);
 });
 
 test("a merge response lost after acceptance is read back, never repeated", async () => {

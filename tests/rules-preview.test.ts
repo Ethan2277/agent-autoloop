@@ -40,6 +40,13 @@ test("explain shows a rule's channels, and can read a draft file", async () => {
   assert.match(await cli("rules", "explain", draft), /只发 chat/);
 });
 
+test("explain says where cards that name no channels go", () => {
+  assert.ok(!explainRules(fixture, at(0), "UTC").join("\n").includes("默认只发"));
+  const given = JSON.parse(fixture);
+  given.defaultChannels = ["chat"];
+  assert.match(explainRules(JSON.stringify(given), at(0), "UTC").join("\n"), /默认只发 chat/);
+});
+
 test("explain says which rules go on in the last round's session", () => {
   assert.ok(!explainRules(fixture, at(0), "UTC").join("\n").includes("接着上一轮的会话"));
   const given = JSON.parse(fixture);

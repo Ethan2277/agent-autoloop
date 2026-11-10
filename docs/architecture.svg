@@ -72,7 +72,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <!-- 中：Autoloop 内核 -->
 <rect class="core" x="250" y="68" width="460" height="316" rx="22"/>
 <text x="272" y="103" class="ct">Autoloop 内核</text>
-<text x="688" y="101" class="cs" text-anchor="end">约 1650 行 · 零依赖 · 确定性</text>
+<text x="688" y="101" class="cs" text-anchor="end">零运行时依赖 · 确定性</text>
 
 <!-- 内核核心职责 -->
 <rect class="duty" x="268" y="116" width="424" height="52" rx="10"/>

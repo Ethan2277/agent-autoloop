@@ -128,6 +128,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
     ["sources", isObject, "要是一个对象"],
     ["agents", isObject, "要是一个对象"],
     ["channels", isObject, "要是一个对象", true],
+    ["defaultChannels", isSomeWords, "要是通道编号的列表", true],
     ["rules", Array.isArray, "要是一个列表"],
     ["elsewhere", Array.isArray, "要是一个列表", true],
   ]);
@@ -153,6 +154,10 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
       ["answerers", isWords, "要是文字的列表", true],
       ["links", (value) => typeof value === "boolean", "要是 true 或 false", true],
     ]);
+  }
+  for (const channel of rules.defaultChannels ?? []) {
+    if (!Object.hasOwn(rules.channels, channel))
+      issues.push(`rules.json 的 defaultChannels 不是已登记的通道：${channel}`);
   }
   for (const [id, agent] of Object.entries(rules.agents)) {
     if (!ID.test(id)) issues.push(`Agent 的编号${ID_WORDS}：${id}`);

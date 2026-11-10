@@ -44,7 +44,6 @@ test("the version is the tag on this commit, and only while it's on that commit"
   assert.equal(versionLine(repo), `agent-autoloop 未发布（提交 ${head}）`);
   assert.equal(versionName(repo), head, "what other programs are told still says which code this is");
 
-  git(repo, "tag", "pre-public-delete-20261203");
   git(repo, "tag", "vendor-drop");
   assert.equal(releaseOf(repo), null, "a tag that isn't a version");
   git(repo, "tag", "v1.2.0-rc.1");

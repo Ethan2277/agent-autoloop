@@ -72,7 +72,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK S
 <!-- Center: Autoloop kernel -->
 <rect class="core" x="250" y="68" width="460" height="316" rx="22"/>
 <text x="272" y="102" class="cte">Autoloop kernel</text>
-<text x="688" y="101" class="cs" text-anchor="end">~1,650 lines · 0 deps · Deterministic</text>
+<text x="688" y="101" class="cs" text-anchor="end">No runtime dependencies · Deterministic</text>
 
 <!-- Core responsibility -->
 <rect class="duty" x="268" y="116" width="424" height="52" rx="10"/>
