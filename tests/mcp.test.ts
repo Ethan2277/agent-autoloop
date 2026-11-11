@@ -2,7 +2,8 @@
 // the hub; an HTTP failure becomes a successful tool result; notifications get responses; source keys act as owner keys;
 // a client is told a version number left behind by a release; a slow tool call holds up a ping or another call, or is
 // dropped when the input ends while it's in hand; a U+2028 or U+2029 in a request, which JSON leaves as it is, cuts the
-// line, so the request never gets an answer.
+// line, so the request never gets an answer. An Agent asking through MCP sees only the newest page of runs and can't go
+// back past it.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -140,6 +141,18 @@ test("MCP stdio initializes and exposes only the typed hub operations", async ()
     ["/v1/runs/999/why", "Bearer owner-key"],
     ["/v1/state", "Bearer owner-key"],
   ]);
+});
+
+test("status goes back a page of runs when given before", async () => {
+  const urls: string[] = [];
+  const mcp = await connect((req, res) => {
+    urls.push(req.url!);
+    res.end(JSON.stringify({ ok: true }));
+  });
+  mcp.send({ id: 2, method: "tools/call", params: { name: "status", arguments: { before: 41 } } });
+  assert.equal((await mcp.answered(2)).result.isError, undefined);
+  await mcp.close();
+  assert.deepEqual(urls, ["/v1/state?before=41"]);
 });
 
 test("U+2028 and U+2029 in a request are part of the line", async () => {

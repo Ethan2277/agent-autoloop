@@ -2,7 +2,7 @@
 // wrong, and leave the old rules running. Failure cases: a rule naming a source or agent that isn't there; two rules with
 // one name; a rule matching no event or with both a source and a schedule; a schedule that is malformed or never comes; an
 // unknown way of telling; an agent without a worker, with an unknown access level, a program to start that isn't one
-// path, or a command without a command line; a
+// path, a service tier that isn't a word, or a command without a command line; a
 // rule that sends its work to an ACP agent with no command line, which only shows when it runs and then fails ten times, or
 // an ACP agent like that which no rule uses and which never hurt anyone being refused; a rule with neither a skill nor a
 // prompt, or without a folder; a misspelt field taken silently; a rule running more than one at a time without saying how many, or
@@ -47,6 +47,11 @@ test("the fixture loads, with defaults filled in", () => {
   const wrapped = good();
   wrapped.agents.a1.program = "/opt/bin/claude-via-gateway";
   assert.equal(parseRules(JSON.stringify(wrapped)).agents.a1.program, "/opt/bin/claude-via-gateway");
+  wrapped.agents.a1.maxActive = 3;
+  wrapped.rules[0].maxActive = 1;
+  const limited = parseRules(JSON.stringify(wrapped));
+  assert.equal(limited.agents.a1.maxActive, 3);
+  assert.equal(limited.rules[0].maxActive, 1);
 });
 
 test("a mistake says which rule and what is wrong", () => {
@@ -107,6 +112,12 @@ test("a mistake says which rule and what is wrong", () => {
     r.rules[0].parallel = 0;
   }, /规则「意见」.*parallel/);
   problem((r) => {
+    r.rules[0].maxActive = 0;
+  }, /规则「意见」.*maxActive/);
+  problem((r) => {
+    r.agents.a1.maxActive = 1.5;
+  }, /Agent a1.*maxActive/);
+  problem((r) => {
     r.rules[0].resume = "thread";
   }, /规则「意见」.*resume/);
   problem((r) => {
@@ -121,6 +132,9 @@ test("a mistake says which rule and what is wrong", () => {
   problem((r) => {
     r.agents.a1.program = ["/opt/bin/claude"];
   }, /Agent a1.*program/);
+  problem((r) => {
+    r.agents.a2.tier = "";
+  }, /Agent a2 的 tier/);
   problem((r) => {
     delete r.agents.a3.command;
   }, /Agent a3.*command/);

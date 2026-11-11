@@ -81,7 +81,7 @@ async function install(plugins: Record<string, string> = {}) {
       encoding: "utf8",
       timeout: 30_000,
     });
-  const installed = cli("init", "--command", "echo hi {prompt}", "--port", String(port), "--no-service");
+  const installed = cli("init", "--command", "node {prompt}", "--port", String(port), "--no-service");
   assert.equal(installed.status, 0, installed.stderr);
   for (const [file, code] of Object.entries(plugins)) {
     mkdirSync(join(home, "plugins", file.split("/")[0]), { recursive: true });

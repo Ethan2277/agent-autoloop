@@ -17,6 +17,7 @@ const when = (rule: Rule, rules: Rules, now: number) =>
 function details(rule: Rule, rules: Rules, now: number) {
   const parts = [when(rule, rules, now), `→ ${rule.to}`, rule.cwd];
   if (rule.parallel) parts.push(`并发 ${rule.parallel}`);
+  if (rule.maxActive) parts.push(`本规则最多同时 ${rule.maxActive} 轮`);
   if (rule.channels?.length) parts.push(`只发 ${rule.channels.join("、")}`);
   if (rule.resume) parts.push("接着上一轮的会话");
   if (rule.group !== rule.name) parts.push(`组 ${rule.group}`);
@@ -36,7 +37,10 @@ export function explainRules(text: string, now = Date.now(), zone = localZone())
       .map(([id, source]) => `${id}（${source.name}）`)
       .join("、")}`,
     `Agent：${Object.entries(rules.agents)
-      .map(([id, agent]) => `${id}（${agent.name}，${agent.worker}，权限 ${agent.access}）`)
+      .map(([id, agent]) => {
+        const limit = agent.maxActive ? `，最多同时 ${agent.maxActive} 轮` : "";
+        return `${id}（${agent.name}，${agent.worker}，权限 ${agent.access}${limit}）`;
+      })
       .join("、")}`,
   ];
   if (Object.keys(rules.channels).length)

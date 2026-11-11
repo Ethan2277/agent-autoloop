@@ -71,14 +71,18 @@ PR 一开出来就开审查，几个 PR 同时审，不排队。审查报的问�
 - 内置与第三方插件统一为 `plugins/<名字>/{agent,channel,source}.ts`，安装目录优先，内核不导入插件。命令行在 `cli/`，接单程序在 `worker/`；不要再加另一套发现路径。
 - 外部事件只能带资料。Agent、目录、权限、交付仓库、审查命令由可信规则与项目 main 决定。回执事件继承 hops，超过 8 层留记录但不继续派发。
 - 交付进程不能检出或运行 PR 的代码、测试、配置、hooks；只能把裸 Git 对象变成文字快照。默认 Codex 审查忽略用户配置与记忆，保留快照只读沙箱。
-- 队列、并发、失败计数和通知属于中台；交付插件只走审查、检查、合并、Ship、健康核实，不再维护另一套调度。
+- 队列、并发和重派属于中台。交付插件按 GitHub 状态确定这一轮该做什么，托付给中台的复查记录交付重试次数；应急单次运行复用同一流程。
 - `ops/delivery.json`、四个交付标签和 `delivery` 状态保持约定，审查状态、审查命令和各 Agent 的审查器可配置。Ship 判断放本仓库 Action，依赖的 GitHub Action 固定到完整 SHA。
 - 必须保住的事故逻辑，只收真实运行或真实用户碰到过的：设置只来自 main；分支自己的改动才审查；冲突解决保留；草稿检查不放行；提交或 main 变化不合并；自动合并确认关闭；丢失的合并响应读回；Ship 成功与健康版本一起验证；后续文档提交不掩盖未发布代码；已完成的交付不被后续发布倒退。
-- 交付的其他约定，没有事故依据，要调整时直接改：发现问题的提交不再审第二次；看不到内容的章鱼合并不放行；只审查的 PR 不因清标签失败被合并；目标分支改了不合并；来源声明用提交状态 `delivery-agent/<PR 编号>`，一个 Agent 只配一个审查器。
+- 交付的其他约定，没有事故依据，要调整时直接改：发现问题的提交不再审第二次；看不到内容的章鱼合并不放行；只审查的 PR 不因清标签失败被合并；目标分支改了不合并；来源声明用提交状态 `delivery-agent/<PR 编号>`。共用策略可以为一个 Agent 指定多位审查器，每轮只在全部完成后登记。
 - 改同一个约定时一起检查代码、协议、示例、两份 README、INSTALL、SKILL、SECURITY 和架构图。搜索旧路径、旧名称、旧数量和旧的能力限制。设计直接写进协议和维护约定。
 
 ## 验证范围
 
 现有测试是行为规格，不为迁就实现改预期。模拟、穷举、强杀和变异检查在本地只在相关改动需要时运行，不扩写验证框架。新测试先写失败方式再写实现，不补复述实现的测试。性能只记录实测，不设达标线，不作为发布门槛；不为加速模拟保留另一套内核。实测采用 README 和协议的口径：空闲内存与千连接内存分开，持久化写入不换成批量提交。不写守数字的测试（行数、内存、检查条数）：边界用查越没越界的测试守，长了多少写进汇报让人判断。
 
-真机脚本在 `scripts/real-agents.ts`、`scripts/real-protocols.ts` 和 `scripts/delivery-e2e.ts`。真实交付脚本要求 `owner/name --run`，会创建并删除指定私有测试仓库；只有用户明确要求运行时才执行。其他测试使用临时 `AGENT_AUTOLOOP_HOME` 和随机端口，退出清理。飞书用假 CLI；不能拿已在线的应用再开一个事件监听。通道用本地假 HTTP 服务，不发真消息。桌面通知用放在 PATH 最前面的假命令，不真的弹：`init` 之后再跑 `up` 的测试都要带上。`scripts/install-smoke.sh` 在临时 HOME 里走一遍从安装到卸载，装的是已提交的代码，CI 在 ubuntu 和 macOS 上都跑；Windows 用 `scripts/install-smoke-windows.ts`，共用行为和原生进程检查用 `npm run test:windows`。Unix shell、Homebrew 与服务模拟仍在 Unix 验证，Windows 原生安装、通知和进程树由专用测试覆盖；登录服务在真实桌面会话验证，CI 不注册用户任务。
+真机脚本在 `scripts/real-agents.ts`、`scripts/real-protocols.ts` 和 `scripts/delivery-e2e.ts`。真实交付脚本要求 `owner/name --run`，会创建并删除指定私有测试仓库；只有用户明确要求运行时才执行。其他测试使用临时 `AGENT_AUTOLOOP_HOME` 和随机端口。飞书用假 CLI；不能拿已在线的应用再开一个事件监听。通道用本地假 HTTP 服务，不发真消息。
+
+本机用 `init --no-service` 准备验收时，先从临时 `config.json` 和 `rules.json` 的 `channels` 移除 `desktop` 再启动 `up`。验收桌面通道时才保留 `desktop`，并用放在 PATH 最前面的假命令接收通知。后台启动时记下这次进程的 PID，正常结束、失败和中断时都等该进程退出后再删临时目录。
+
+`scripts/install-smoke.sh` 在临时 HOME 里走一遍从安装到卸载，装的是已提交的代码，CI 在 Ubuntu 和 macOS 上都跑。Windows 用 `scripts/install-smoke-windows.ts`，共用行为和原生进程检查用 `npm run test:windows`。Unix shell、Homebrew 与服务模拟仍在 Unix 验证，Windows 原生安装、通知和进程树由专用测试覆盖。登录服务在真实桌面会话验证，CI 不注册用户任务。

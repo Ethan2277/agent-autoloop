@@ -12,6 +12,21 @@ import { InputError } from "../kernel/errors.ts";
 import { at, setup } from "./helpers.ts";
 
 const fixture = readFileSync(new URL("./rules.fixture.json", import.meta.url), "utf8");
+
+test("the explanation shows rule and Agent claim limits independently", () => {
+  const given = JSON.parse(fixture);
+  given.rules[0].maxActive = 1;
+  given.agents.a1.maxActive = 2;
+  const lines = explainRules(JSON.stringify(given), at(0), "UTC");
+  assert.match(
+    lines.find((line) => line.startsWith("Agent："))!,
+    /a1（[^）]+最多同时 2 轮/,
+  );
+  assert.match(
+    lines.find((line) => line.startsWith("  意见："))!,
+    /并发 3 · 本规则最多同时 1 轮/,
+  );
+});
 const home = setup("rules-preview");
 const cli = async (...args: string[]) =>
   (

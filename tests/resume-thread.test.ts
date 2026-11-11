@@ -4,7 +4,7 @@
 // a session goes over to the agent the rule was moved to; an answer or a retry loses the session it carries to a newer one;
 // a round that is or may still be running has its session opened by a second process, by a new event, an answer or a due
 // check; one such round stops its thread resuming for ever; a session that keeps failing is gone back into by each new event,
-// ten tries each, though the card said it would start over.
+// ten tries each, though the card said it would start over; a due check hands the previous agent's session to a new agent.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -132,6 +132,27 @@ test("a session doesn't go over to the agent the rule was moved to, nor back to 
   assert.equal(it.round(null).session, null);
   it.act("rules", rules);
   assert.equal(it.round("T").session, null);
+});
+
+test("a due check retains its context but not another agent's session after reassignment", () => {
+  const it = hub();
+  it.message();
+  const first = it.claim();
+  it.act("finish", first.run, first.token, {
+    outcome: "done",
+    session: "claude-session",
+    later: [{ key: "复查", at: "2026-11-05T01:00:00Z", about: "核实上线" }],
+  });
+  const moved = structuredClone(rules);
+  moved.rules.find((rule) => rule.name === "意见")!.to = "a2";
+  it.act("rules", moved);
+  it.pass(61);
+  it.act("tick");
+  const next = it.act("claimNext", "w2", "new-agent");
+  assert.equal(next.agent.id, "a2");
+  assert.equal(next.session, null);
+  assert.equal(next.context.timers[0].about, "核实上线");
+  it.check();
 });
 
 test("an answer goes back to the session it was asked in, not a newer one on the thread", () => {

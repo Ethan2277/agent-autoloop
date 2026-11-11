@@ -45,65 +45,39 @@ export function render(card: Card) {
     card.kind === "notice" && card.answer
       ? [{ tag: "div", text: { tag: "plain_text", content: `处理说明：${card.answer}` } }]
       : [];
-  const noteForm =
-    card.kind === "notice"
-      ? [
-          {
-            tag: "form",
-            name: "handling_note",
-            elements: [
-              {
-                tag: "input",
-                name: "note",
-                input_type: "multiline_text",
-                rows: 2,
-                auto_resize: true,
-                max_length: 1000,
-                label: { tag: "plain_text", content: "处理说明（可不填）" },
-                label_position: "top",
-                placeholder: { tag: "plain_text", content: "比如：已回复他视频下周发；或：群发广告，不用管" },
-              },
-              {
-                tag: "button",
-                name: `handling_note_submit_${card.id}`,
-                form_action_type: "submit",
-                type: "primary",
-                text: { tag: "plain_text", content: "记录并结案" },
-              },
-            ],
+  const notice = card.kind === "notice";
+  // Both forms submit `note`; an ask uses it as the answer, a notice records it when closing the card.
+  const textForm = [
+    {
+      tag: "form",
+      name: notice ? "handling_note" : `ask_text_${card.id}`,
+      elements: [
+        {
+          tag: "input",
+          name: "note",
+          input_type: "multiline_text",
+          rows: 2,
+          auto_resize: true,
+          max_length: 1000,
+          label: { tag: "plain_text", content: notice ? "处理说明（可不填）" : "选项都不合适，就直接写回答" },
+          label_position: "top",
+          placeholder: {
+            tag: "plain_text",
+            content: notice
+              ? "比如：已回复他视频下周发；或：群发广告，不用管"
+              : "写好点“提交文字”；写了再点选项，文字不会带上",
           },
-        ]
-      : [];
-  // An ask card can take words too: the hub answers a card with text and no choice, the same as `answer --text`.
-  const askTextForm =
-    card.kind === "ask" && card.state === "open"
-      ? [
-          {
-            tag: "form",
-            name: `ask_text_${card.id}`,
-            elements: [
-              {
-                tag: "input",
-                name: "note",
-                input_type: "multiline_text",
-                rows: 2,
-                auto_resize: true,
-                max_length: 1000,
-                label: { tag: "plain_text", content: "选项都不合适，就直接写回答" },
-                label_position: "top",
-                placeholder: { tag: "plain_text", content: "写好点“提交文字”；写了再点选项，文字不会带上" },
-              },
-              {
-                tag: "button",
-                name: `ask_text_submit_${card.id}`,
-                form_action_type: "submit",
-                type: "default",
-                text: { tag: "plain_text", content: "提交文字" },
-              },
-            ],
-          },
-        ]
-      : [];
+        },
+        {
+          tag: "button",
+          name: notice ? `handling_note_submit_${card.id}` : `ask_text_submit_${card.id}`,
+          form_action_type: "submit",
+          type: notice ? "primary" : "default",
+          text: { tag: "plain_text", content: notice ? "记录并结案" : "提交文字" },
+        },
+      ],
+    },
+  ];
   return {
     schema: "2.0",
     config: { update_multi: true, enable_forward: false },
@@ -115,7 +89,7 @@ export function render(card: Card) {
       elements: [
         ...(card.text ? [{ tag: "markdown", content: card.text }] : []),
         ...(card.state === "open"
-          ? [...noteForm, ...card.options.map(option), ...askTextForm]
+          ? [...(notice ? textForm : []), ...card.options.map(option), ...(notice ? [] : textForm)]
           : [...afterwards, ...noteSaid]),
       ],
     },

@@ -7,7 +7,7 @@ import { hubClient, type Hub } from "../protocol/client.ts";
 const positive = { type: "integer", minimum: 1 };
 const string = { type: "string", minLength: 1 };
 const specs = [
-  ["status", "查看现在的事项和卡片", {}, []],
+  ["status", "查看现在的事项和卡片；before 写上一页的 nextBefore，往前翻更早的轮次", { before: positive }, []],
   ["why", "查看一轮的事件、规则和结果", { run: positive }, ["run"]],
   [
     "answer",
@@ -60,7 +60,7 @@ function validArguments(tool: Tool, args: any) {
 function callTool(hub: Hub, name: Tool["name"], args: any) {
   switch (name) {
     case "status":
-      return hub.state();
+      return hub.state(args.before);
     case "why":
       return hub.why(args.run);
     case "answer": {

@@ -65,7 +65,7 @@ test("words init does not read stop it too", async () => {
 });
 
 test("the flags init does read still reach the config", async () => {
-  const ran = await run(["init", "--command", "echo {prompt}", "--port", "3361", "--no-service"]);
+  const ran = await run(["init", "--command", "node {prompt}", "--port", "3361", "--no-service"]);
   assert.equal(ran.code, 0, ran.stderr);
   const config = JSON.parse(readFileSync(join(ran.home, "config.json"), "utf8")) as { url: string };
   assert.equal(config.url, "http://127.0.0.1:3361");

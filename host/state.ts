@@ -18,7 +18,7 @@ const VIEWS = {
     "id key kind title text options recommend about state fyi quiet choice answer by result rule lane grp source " +
     "agent session run_id answer_event version created_at decided_at closed_at",
   deliveries: "card_id channel version ref tries first_try_at not_before error given_up",
-  timers: "id rule lane key source session about at event_id created_at",
+  timers: "id rule lane key source agent session about at event_id created_at",
   schedules: "rule cron next_at skipped_at",
   seen: "kind name seen_at",
   keys: "kind name hash created_at",

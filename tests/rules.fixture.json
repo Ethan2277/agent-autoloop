@@ -3,7 +3,7 @@
   "sources": { "app": { "name": "应用" }, "ops": { "name": "运维" }, "hooks": { "name": "外部", "adapter": "echo" } },
   "agents": {
     "a1": { "name": "甲", "worker": "w1", "use": "claude", "model": "m1", "effort": "high" },
-    "a2": { "name": "乙", "worker": "w2", "use": "codex", "access": "full" },
+    "a2": { "name": "乙", "worker": "w2", "use": "codex", "access": "full", "tier": "priority" },
     "a3": { "name": "丙", "worker": "w1", "use": "command", "command": ["echo", "{prompt}"] }
   },
   "channels": { "chat": { "name": "聊天", "answerers": ["me"] }, "plain": { "name": "文字", "links": true } },

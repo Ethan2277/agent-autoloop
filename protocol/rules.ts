@@ -79,6 +79,7 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["prompt", isText, NOT_EMPTY, true],
     ["group", isText, NOT_EMPTY, true],
     ["parallel", isCount, "要是正整数", true],
+    ["maxActive", isCount, "要是正整数", true],
     ["resume", (value) => typeof value === "boolean", "只能是 true 或 false", true],
     ["tell", (value) => TELLS.includes(value as string), `只能是 ${TELLS.join("、")}`, true],
     ["emits", isObject, "要是一个对象", true],
@@ -167,10 +168,12 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
       ["use", isId, ID_WORDS],
       ["model", isText, NOT_EMPTY, true],
       ["effort", isText, NOT_EMPTY, true],
+      ["tier", isText, NOT_EMPTY, true],
       ["access", (value) => ACCESS.includes(value as string), `只能是 ${ACCESS.join("、")}`, true],
       ["command", isSomeWords, "要是命令行的列表", !isObject(agent) || agent.use !== "command"],
       ["program", isText, "要是一个程序的路径", true],
       ["timeout", isCount, "要是正整数（分钟）", true],
+      ["maxActive", isCount, "要是正整数", true],
     ]);
     if (isObject(agent)) agent.access ??= "edit";
   }

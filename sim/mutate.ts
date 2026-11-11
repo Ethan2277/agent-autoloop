@@ -12,12 +12,7 @@ const edits: [string, string, string, string][] = [
   ["resume-after-stop", "decide.ts", 'last?.state !== "cancelled" && ', ""],
   ["group-capacity", "decide.ts", "claimed.filter((other) => other.grp === run.grp).length <", "0 <"],
   ["lane-exclusion", "decide.ts", "!claimed.some((other) => other.grp === run.grp && other.lane === run.lane)", "true"],
-  [
-    "worker-boundary",
-    "decide.ts",
-    'run.state === "queued" &&\n    agents.includes(ruleNamed(draft, run.rule)?.to ?? "")',
-    'run.state === "queued" &&\n    true',
-  ],
+  ["worker-boundary", "decide.ts", "!agents.includes(rule.to)", "false"],
   ["retry-delay", "decide.ts", "5 * MINUTE * 2 ** (attempts - 1)", "0 * MINUTE * 2 ** (attempts - 1)"],
   [
     "receipt-replay",

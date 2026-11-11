@@ -232,6 +232,7 @@ export function createWorker({
       cwd,
       model: agent.model,
       effort: agent.effort,
+      tier: agent.tier,
       access: agent.access as Turn["access"],
       command: agent.command,
       program: agent.program,

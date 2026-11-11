@@ -50,8 +50,8 @@ const unlinked = (text: string) => text.replace(LINK, "$1");
 
 const WEEK = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
-export function render(state: any, { color, columns }: { color: boolean; columns?: number }) {
-  const room = Math.min(columns || 100, 120);
+/** Colours that are there only on a terminal. */
+function stylesFor(color: boolean) {
   const sgr =
     (code: string): Style =>
     (text) =>
@@ -59,8 +59,11 @@ export function render(state: any, { color, columns }: { color: boolean; columns
   const [bold, dim, underline, red, green, yellow, magenta, cyan] = ["1", "2", "4", "31", "32", "33", "35", "36"].map(
     sgr,
   );
-  const heading = sgr("1;34");
+  return { bold, dim, underline, red, green, yellow, magenta, cyan, heading: sgr("1;34") };
+}
 
+/** Times as a person reads them, in the hub's time zone, counted from the hub's now. */
+function clockFor(state: any) {
   const zone = state.timezone;
   const now = Date.parse(state.now);
   const dayOf = (at: number) => {
@@ -84,6 +87,47 @@ export function render(state: any, { color, columns }: { color: boolean; columns
     const minutes = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000));
     return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
   };
+  return { when, lasted };
+}
+
+/** A finished run is no longer going or waiting to go. */
+export const finished = (run: any) => run.state !== "claimed" && run.state !== "queued";
+
+/** Finished runs, each its own entry: when it ended, its number, how and its rule, then a line or two of what came of it. */
+export function runRows(state: any, runs: any[], { color, columns }: { color: boolean; columns?: number }) {
+  const room = Math.min(columns || 100, 120);
+  const { dim, red, green, yellow } = stylesFor(color);
+  const { when } = clockFor(state);
+  const RUN_LOOK: Record<string, [string, Style]> = {
+    done: ["做完了", green],
+    nothing: ["没事可做", dim],
+    cancelled: ["停了", yellow],
+    unknown: ["不确定", red],
+  };
+  const out: string[] = [];
+  const ended = runs.map((run: any) => (run.finishedAt ? when(run.finishedAt) : ""));
+  const timeRoom = Math.max(0, ...ended.map(width));
+  const runRoom = Math.max(0, ...runs.map((run: any) => width(`#${run.id}`)));
+  const lookRoom = Math.max(...Object.values(RUN_LOOK).map(([label]) => width(label)));
+  runs.forEach((run: any, index: number) => {
+    const [label, style] = RUN_LOOK[run.state] ?? [run.state, (text: string) => text];
+    const before = `  ${pad(ended[index], timeRoom)} ${pad(`#${run.id}`, runRoom)} ${pad(label, lookRoom)} `;
+    out.push(
+      `  ${dim(pad(ended[index], timeRoom))} ${dim(pad(`#${run.id}`, runRoom))} ${style(pad(label, lookRoom))} ${run.rule}`,
+    );
+    const outcome = run.error || run.summary;
+    if (!outcome) return;
+    const look = run.error ? red : run.state === "nothing" ? dim : (text: string) => text;
+    const indent = " ".repeat(width(before));
+    for (const line of wrap(unlinked(outcome), room - indent.length, 2)) out.push(indent + look(line));
+  });
+  return out;
+}
+
+export function render(state: any, { color, columns }: { color: boolean; columns?: number }) {
+  const room = Math.min(columns || 100, 120);
+  const { bold, dim, underline, red, green, yellow, magenta, cyan, heading } = stylesFor(color);
+  const { when, lasted } = clockFor(state);
 
   const out: string[] = [];
   const say = (line = "") => out.push(line);
@@ -168,30 +212,9 @@ export function render(state: any, { color, columns }: { color: boolean; columns
     if (retry && run.error) for (const line of wrap(run.error, room - 6, 2)) say(`      ${red(line)}`);
   }
 
-  const RUN_LOOK: Record<string, [string, Style]> = {
-    done: ["做完了", green],
-    nothing: ["没事可做", dim],
-    cancelled: ["停了", yellow],
-    unknown: ["不确定", red],
-  };
-  const finished = state.runs.filter((run: any) => run.state !== "claimed" && run.state !== "queued").slice(0, 8);
-  if (finished.length) section(heading("最近几轮"));
-  const ended = finished.map((run: any) => (run.finishedAt ? when(run.finishedAt) : ""));
-  const timeRoom = Math.max(0, ...ended.map(width));
-  const runRoom = Math.max(0, ...finished.map((run: any) => width(`#${run.id}`)));
-  const lookRoom = Math.max(...Object.values(RUN_LOOK).map(([label]) => width(label)));
-  finished.forEach((run: any, index: number) => {
-    const [label, style] = RUN_LOOK[run.state] ?? [run.state, (text: string) => text];
-    const before = `  ${pad(ended[index], timeRoom)} ${pad(`#${run.id}`, runRoom)} ${pad(label, lookRoom)} `;
-    say(
-      `  ${dim(pad(ended[index], timeRoom))} ${dim(pad(`#${run.id}`, runRoom))} ${style(pad(label, lookRoom))} ${run.rule}`,
-    );
-    const outcome = run.error || run.summary;
-    if (!outcome) return;
-    const look = run.error ? red : run.state === "nothing" ? dim : (text: string) => text;
-    const indent = " ".repeat(width(before));
-    for (const line of wrap(unlinked(outcome), room - indent.length, 2)) say(indent + look(line));
-  });
+  const recentRuns = state.runs.filter(finished).slice(0, 8);
+  if (recentRuns.length) section(heading("最近几轮"));
+  for (const line of runRows(state, recentRuns, { color, columns })) say(line);
 
   const CARD_LOOK: Record<string, [string, Style]> = {
     decided: ["已回答", cyan],

@@ -484,6 +484,9 @@
             "effort": {
               "type": "string"
             },
+            "tier": {
+              "type": "string"
+            },
             "access": {
               "enum": ["read", "edit", "full"]
             },

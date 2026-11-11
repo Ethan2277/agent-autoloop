@@ -40,6 +40,8 @@ const HELP = `Agent 自动化中台
                                     在测试中台上检查协议
   agent-autoloop status [--json]         现在什么情况：谁在线、等你什么、在做什么、做过什么、花了多少
                                      --json 输出 /v1/state 的原始结构，给脚本用
+  agent-autoloop runs [规则] [--before <第几轮>] [--json]
+                                    列出做完的轮次，可以只看一条规则、往前翻；细节再用 why
   agent-autoloop answer <卡片> [序号] [--text 别的想法]
                                     回答一张卡片；通知不用写序号
   agent-autoloop resolve <卡片> <结果>   这件事不用决定了，写一句结果
@@ -81,7 +83,8 @@ const HELP = `Agent 自动化中台
 const INIT_USAGE = `用法：agent-autoloop init [--agent claude|codex] [--command '某个命令 {prompt}'] [--port 3350] [--no-service]
 
   --agent      只接这个 Agent：claude 或 codex。不写就接本机装好的全部
-  --command    改用别的命令行 Agent；{prompt} 会作为一个独立参数传进去
+  --command    改用别的命令行 Agent；{prompt} 会作为一个独立参数传进去，带空格的路径用引号括起来；
+               这台电脑上找不到这个程序就不装
   --port       中台监听的端口，默认 3350
   --no-service 先不装系统服务，之后手动运行 agent-autoloop up`;
 
@@ -93,6 +96,13 @@ const STATUS_USAGE = `用法：agent-autoloop status [--json]
 
 现在什么情况：谁在线、等你什么、在做什么、做过什么、花了多少。
   --json  输出 /v1/state 的原始结构，给脚本和看板用`;
+
+const RUNS_USAGE = `用法：agent-autoloop runs [规则] [--before <第几轮>] [--json]
+
+列出做完的轮次，新的在前，一次 20 轮：编号、结束时间、怎么样了、规则和结果。
+  规则      只看这一条规则的
+  --before  从这一轮往前列，接着上一次列到的地方
+  --json    输出这些轮次的原始结构和下一页的 before，给脚本用`;
 
 const UPDATE_USAGE = `用法：agent-autoloop update
 
@@ -147,6 +157,7 @@ rules.json 里这个定时任务要写 cwd；你答了，中台叫醒它的 Agen
   restore: { flags: ["yes"], usage: RESTORE_USAGE },
   resume: { flags: [], usage: "用法：agent-autoloop resume <规则>" },
   rules: { flags: [], usage: "用法：agent-autoloop rules explain [文件]" },
+  runs: { flags: ["before", "json"], usage: RUNS_USAGE },
   run: { flags: ["subject", "reason"], usage: "用法：agent-autoloop run <规则> [--subject 对象] [--reason 说明]" },
   service: { flags: [], usage: "用法：agent-autoloop service install|remove" },
   status: { flags: ["json"], usage: STATUS_USAGE },
@@ -246,16 +257,56 @@ function howToRun() {
   return /\s/.test(PROGRAM) ? `'${PROGRAM}'` : PROGRAM;
 }
 
+/**
+ * A command line split the way a shell would: spaces part words, quotes keep one together and are dropped. No escapes, as
+ * a Windows path is all backslashes. Null when a quote is left open.
+ */
+function commandWords(line: string) {
+  const words: string[] = [];
+  let word: string | null = null;
+  let quote: string | null = null;
+  for (const char of line) {
+    if (quote) {
+      if (char === quote) quote = null;
+      else word += char;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      word ??= "";
+    } else if (/\s/.test(char)) {
+      if (word !== null) words.push(word);
+      word = null;
+    } else word = (word ?? "") + char;
+  }
+  if (quote) return null;
+  if (word !== null) words.push(word);
+  return words;
+}
+
 /** What was asked for on the command line, or whichever of the usual Agents is installed. */
 async function agentsToUse(named: Flags, worker: string) {
   const agents: Record<string, { name: string; worker: string; use: string; command?: string[] }> = {};
+  const { adapterFor, findProgram } = await import("../worker/agents.ts");
   const command = text(named.command);
   if (command) {
-    agents.agent = { name: "Agent", worker, use: "command", command: command.split(/\s+/) };
+    const words = commandWords(command);
+    if (!words?.length) return fail(`--command 里有没配对的引号：${command}`);
+    // Found now, or every run of every rule fails later with the install long said to be done.
+    const [first] = words;
+    const there = /[\\/]/.test(first)
+      ? existsSync(path.resolve(first))
+      : /^[\w.+@-]+$/.test(first) &&
+        (() => {
+          try {
+            return Boolean(findProgram(first));
+          } catch {
+            return false;
+          }
+        })();
+    if (!there) return fail(`找不到 ${first}：先装好它，或者在 --command 里写它的完整路径。`);
+    agents.agent = { name: "Agent", worker, use: "command", command: words };
     return agents;
   }
   const wanted = text(named.agent);
-  const { adapterFor } = await import("../worker/agents.ts");
   const emptyTurn = {
     prompt: "",
     session: "",
@@ -426,6 +477,18 @@ async function status(named: Flags) {
   const state = await ownerClient().state();
   if (named.json !== undefined) return console.log(JSON.stringify(state, null, 2));
   console.log(render(state, { color: colorFor(process.stdout, process.env), columns: process.stdout.columns }));
+}
+
+async function runs(args: string[]) {
+  const { named, rest } = flags(args);
+  if (rest.length > 1 || named.before === true) return fail(RUNS_USAGE);
+  const before = named.before === undefined ? undefined : runOf(named.before, RUNS_USAGE);
+  const owner = ownerClient();
+  const { findRuns, runsText } = await import("./runs.ts");
+  const found = await findRuns((at) => owner.state(at), { rule: rest[0], before });
+  if (named.json !== undefined) return console.log(JSON.stringify({ runs: found.runs, before: found.more }, null, 2));
+  const color = colorFor(process.stdout, process.env);
+  console.log(runsText(found, { rule: rest[0], color, columns: process.stdout.columns }));
 }
 
 async function answer(args: string[]) {
@@ -801,6 +864,7 @@ const commands: Record<string, () => unknown> = {
   try: () => tryIt(),
   status: () => status(flags(args).named),
   why: () => why(args),
+  runs: () => runs(args),
   conformance: () => checkConformance(args),
   answer: () => answer(args),
   resolve: () => resolve(args),

@@ -12,7 +12,10 @@ up_pid=""
 
 cleanup() {
   code=$?
-  if [ -n "$up_pid" ]; then kill "$up_pid" 2>/dev/null || true; fi
+  if [ -n "$up_pid" ]; then
+    kill "$up_pid" 2>/dev/null || true
+    wait "$up_pid" 2>/dev/null || true
+  fi
   if [ "$code" -ne 0 ] && [ -f "$work/up.log" ]; then
     echo "--- up.log"
     cat "$work/up.log"
@@ -117,6 +120,7 @@ agent-autoloop uninstall --yes </dev/null
 [ ! -e "$AGENT_AUTOLOOP_HOME/app" ] || fail "uninstall left the program"
 if [ -e "$HOME/.local/bin/agent-autoloop" ] || [ -L "$HOME/.local/bin/agent-autoloop" ]; then fail "the command is still there"; fi
 if healthy >/dev/null 2>&1; then fail "the hub is still running"; fi
+wait "$up_pid" 2>/dev/null || true
 up_pid=""
 left=$(find "$HOME" \( -type f -o -type l \))
 [ -z "$left" ] || fail "left behind: $left"

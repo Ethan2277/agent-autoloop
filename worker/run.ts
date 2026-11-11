@@ -35,16 +35,22 @@ if (process.argv[2] === "--supervise") {
     writeFileSync(`${exit}.tmp`, String(code), { mode: 0o600 });
     renameSync(`${exit}.tmp`, exit);
   };
+  // The command line Windows starts has a limit, and a long prompt passed on it reaches it; spawn may throw that at once.
+  const said = (error: NodeJS.ErrnoException) =>
+    error.code === "ENAMETOOLONG"
+      ? `命令行太长：约 ${argv.join(" ").length} 个字符，Windows 最多 32767。` +
+        "把规则里长的说明写进 Skill，提示词里只留一句加载它。"
+      : error.message;
   try {
     const [program, args] = commandLine(argv);
     const child = spawn(program, args, { cwd, stdio: "inherit", windowsHide: true });
     child.on("error", (error) => {
-      console.error(error.message);
+      console.error(said(error));
       publish(127);
     });
     child.on("exit", (code) => publish(code ?? 1));
   } catch (error) {
-    console.error((error as Error).message);
+    console.error(said(error as NodeJS.ErrnoException));
     publish(127);
   }
 }

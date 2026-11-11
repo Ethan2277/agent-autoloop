@@ -40,13 +40,24 @@ export function findOnPath(name: string, extensions = [".exe", ".com", ".cmd", "
   return null;
 }
 
+/**
+ * The npm.cmd and npx.cmd of npm 10 and later name their script in a variable set from %~dp0, then run
+ * `"%NODE_EXE%" "%NPM_CLI_JS%" %*`. The npm they ship with is the one run: their step that may pick a newer npm installed
+ * under the global prefix is left out.
+ */
+function throughVariable(shim: string) {
+  const run = /^"%\w+%"\s+"%(\w+)%"\s+%\*\s*$/im.exec(shim);
+  if (!run) return null;
+  return new RegExp(`^SET\\s+"${run[1]}=%~dp0\\\\?([^"\\r\\n]+\\.[cm]?js)"\\s*$`, "im").exec(shim);
+}
+
 export function commandLine(argv: string[]): [string, string[]] {
   if (process.platform !== "win32") return [argv[0], argv.slice(1)];
   let program = argv[0];
   if (!path.isAbsolute(program)) program = findOnPath(program) ?? program;
   if (/\.cmd$/i.test(program)) {
     const shim = readFileSync(program, "utf8");
-    const entry = /"%(?:dp0%|~dp0)\\?([^"\r\n]+\.(?:[cm]?js|exe))"\s+%\*/i.exec(shim);
+    const entry = /"%(?:dp0%|~dp0)\\?([^"\r\n]+\.(?:[cm]?js|exe))"\s+%\*/i.exec(shim) ?? throughVariable(shim);
     if (!entry) throw new Error(`不能直接运行 ${program}：请在 command 写可执行文件，或用 node 运行脚本。`);
     // A package whose bin is a native program (Claude Code from npm) gets a shim that runs it with no node in front.
     if (/\.exe$/i.test(entry[1])) return [path.resolve(path.dirname(program), entry[1]), argv.slice(1)];

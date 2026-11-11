@@ -9,12 +9,43 @@
 // prints in quotes matches no pattern, so an exempt agent's change to a path reviewed in depth merges unreviewed.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseReview, codexCommand, declaredAgent, depth, reviewSnapshot } from "../plugins/delivery/review.ts";
+import { parseReview, codexCommand, declaredAgent, depth, reviewDelivery } from "../plugins/delivery/review.ts";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { settings } from "../plugins/delivery/project.ts";
+
+/** Exercise the production review entry with GitHub replies kept in memory. */
+function reviewPullRequest(
+  repo: string,
+  snapshot: string,
+  main: string,
+  head: string,
+  config: ReturnType<typeof settings>,
+  source: { agent: string | null; required: boolean } = { agent: null, required: false },
+) {
+  const pr = { number: 7, head: { sha: head }, labels: source.required ? [{ name: "deliver-review" }] : [], body: "" };
+  const states = new Map<string, any[]>();
+  if (source.agent)
+    states.set(head, [
+      { context: "delivery-agent/7", state: "success", description: source.agent, creator: { id: 1 } },
+    ]);
+  return reviewDelivery(repo, snapshot, main, pr, config, {
+    api: async (path, body, method) => {
+      if (path.startsWith("statuses/")) {
+        const sha = path.slice("statuses/".length);
+        states.set(sha, [{ ...body, creator: { id: 1 } }, ...(states.get(sha) ?? [])]);
+        return {};
+      }
+      assert.equal(path, "pulls/7");
+      if (method === "PATCH") pr.body = body.body;
+      return structuredClone(pr);
+    },
+    statuses: (sha) => states.get(sha) ?? [],
+    reviewerId: () => 1,
+  });
+}
 test("a review must explicitly report a valid findings list", () => {
   assert.deepEqual(parseReview('{"findings":[]}'), []);
   assert.equal(parseReview('{"findings":[{"title":"错误","text":"这里会丢数据"}]}').length, 1);
@@ -63,14 +94,14 @@ test("review uses main's points and a text-only snapshot; ordinary internal docs
     });
     writeFileSync(join(repo, "docs/a.md"), "docs");
     const docs = commit();
-    assert.deepEqual(await reviewSnapshot(repo, snap, main, docs, s), []);
+    assert.deepEqual(await reviewPullRequest(repo, snap, main, docs, s), { docsOnly: true });
     assert.ok(!existsSync(called));
     writeFileSync(join(repo, "AGENTS.md"), "## 审查要点\nbranch-points\n");
     writeFileSync(join(repo, "app.ts"), "throw new Error('changed');");
     const head = commit();
-    assert.deepEqual(await reviewSnapshot(repo, snap, main, head, s), []);
+    assert.deepEqual(await reviewPullRequest(repo, snap, main, head, s), []);
     assert.ok(existsSync(called));
-    assert.deepEqual(readdirSync(snap), ["changes.txt"]);
+    assert.deepEqual(readdirSync(join(snap, "1")), ["changes.txt"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -115,8 +146,8 @@ function project(review: (stand: (name: string) => string[]) => object = () => (
       writeFileSync(join(repo, name), content);
     },
     review: (head: string, source?: { agent: string | null; required: boolean }) =>
-      reviewSnapshot(repo, snapshot, main, head, config, source),
-    changes: () => readFileSync(join(snapshot, "changes.txt"), "utf8"),
+      reviewPullRequest(repo, snapshot, main, head, config, source),
+    changes: () => readFileSync(join(snapshot, "1", "changes.txt"), "utf8"),
     reviewed: (name = "called") => existsSync(join(root, name)),
     [Symbol.dispose]: () => rmSync(root, { recursive: true, force: true }),
   };
@@ -135,10 +166,9 @@ test("a branch with an octopus merge is reported, not reviewed without what the 
   p.write("app.ts", "export const version = 'slipped in by the merge';\n");
   const head = p.commit();
   assert.equal(p.git("rev-list", "--parents", "-n1", head).split(" ").length, 4);
-  const findings = await p.review(head);
-  assert.ok(Array.isArray(findings));
-  assert.equal(findings.length, 1);
-  assert.match(findings[0].title, /章鱼合并/);
+  const result = await p.review(head);
+  assert.ok("blocked" in result);
+  assert.match(result.blocked, /章鱼合并/);
   assert.ok(!p.reviewed());
 });
 test("an ordinary merge still goes to the reviewer", async () => {
@@ -156,7 +186,7 @@ test("an ordinary merge still goes to the reviewer", async () => {
 test("a Chinese path still matches the settings", async () => {
   using p = project();
   p.write("docs/说明.md", "docs");
-  assert.deepEqual(await p.review(p.commit()), []);
+  assert.deepEqual(await p.review(p.commit()), { docsOnly: true });
   assert.ok(!p.reviewed());
 });
 test("a root file named like a commit is reviewed as a file", async () => {

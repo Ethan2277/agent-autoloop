@@ -1,7 +1,9 @@
 // Failure modes: a native Windows install cannot launch an Agent; shell metacharacters alter its arguments; restarting
 // the worker loses a running turn or its answer; cancelling a turn leaves its child processes running; a program in a
 // folder whose name the console code page can't write (a Chinese user name) isn't found, so nothing installs or runs; a
-// powershell.exe an Agent left in the turn's folder runs, outside its sandbox, in place of the system's.
+// powershell.exe an Agent left in the turn's folder runs, outside its sandbox, in place of the system's; the npm.cmd and
+// npx.cmd that npm 10 and later write, which name their script through a variable, can't be run at all; a command line
+// longer than Windows starts fails with only "spawn ENAMETOOLONG", which doesn't say what is too long or what to do.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -145,6 +147,64 @@ test("an npm command shim for a native program runs it on Windows", { skip: !win
   );
   assert.equal(results.get(9).outcome, "done", JSON.stringify(results.get(9)));
   assert.equal(readFileSync(join(process.env.AGENT_AUTOLOOP_HOME!, "worker/runs/9-1/stdout-1.log"), "utf8"), argument);
+});
+
+// npm.cmd and npx.cmd from npm 10 on, as Node 22 and later ship them: an ACP agent is often started with npx.
+test(
+  "npm's own command shim, which names its script through a variable, runs it on Windows",
+  { skip: !windows },
+  async () => {
+    const bin = join(scratch, "node_modules", "npm", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "npm-cli.js"), "process.stdout.write('npm: ' + process.argv[2]);");
+    writeFileSync(join(bin, "npm-prefix.js"), "process.stdout.write('');");
+    const shim = join(scratch, "npm.cmd");
+    writeFileSync(
+      shim,
+      [
+        ":: Created by npm, please don't edit manually.",
+        "@ECHO OFF",
+        "",
+        "SETLOCAL",
+        "",
+        'SET "NODE_EXE=%~dp0\\node.exe"',
+        'IF NOT EXIST "%NODE_EXE%" (',
+        '  SET "NODE_EXE=node"',
+        ")",
+        "",
+        'SET "NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js"',
+        'SET "NPM_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npm-cli.js"',
+        'FOR /F "delims=" %%F IN (\'CALL "%NODE_EXE%" "%NPM_PREFIX_JS%"\') DO (',
+        '  SET "NPM_PREFIX_NPM_CLI_JS=%%F\\node_modules\\npm\\bin\\npm-cli.js"',
+        ")",
+        'IF EXIST "%NPM_PREFIX_NPM_CLI_JS%" (',
+        '  SET "NPM_CLI_JS=%NPM_PREFIX_NPM_CLI_JS%"',
+        ")",
+        "",
+        '"%NODE_EXE%" "%NPM_CLI_JS%" %*',
+        "",
+      ].join("\r\n"),
+    );
+    waiting.push(job(11, [shim, "参数 & echo injected"]));
+    const running = worker();
+    await until(
+      () => results.has(11),
+      () => running.tick(),
+    );
+    assert.equal(results.get(11).outcome, "done", JSON.stringify(results.get(11)));
+    assert.equal(results.get(11).summary, "npm: 参数 & echo injected");
+  },
+);
+
+test("a command line too long for Windows says so and what to do", { skip: !windows }, async () => {
+  waiting.push(job(12, [process.execPath, "-e", "0", "x".repeat(40_000)]));
+  const running = worker();
+  await until(
+    () => results.has(12),
+    () => running.tick(),
+  );
+  assert.equal(results.get(12).outcome, "failed", JSON.stringify(results.get(12)));
+  assert.match(results.get(12).error, /命令行太长.*Skill/s);
 });
 
 // where.exe prints in the console's code page; a Chinese folder name came back as a path that doesn't exist.

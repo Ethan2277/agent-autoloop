@@ -30,6 +30,8 @@ export default {
       "--skip-git-repo-check",
       ...(turn.model ? ["-m", turn.model] : []),
       ...(turn.effort ? ["-c", `model_reasoning_effort="${turn.effort}"`] : []),
+      // Unset, a run takes the tier in ~/.codex/config.toml, a file the Codex app shares: "priority" is its Fast.
+      ...(turn.tier ? ["-c", `service_tier="${turn.tier}"`] : []),
       // As config, because `codex exec resume` takes no -s.
       "-c",
       `sandbox_mode="${SANDBOX[turn.access]}"`,
