@@ -37,7 +37,7 @@
 
 状态存在 `worker/runs/<run>-<attempt>/entry.json`、stdout 和 exit 文件，由 `worker/worker.ts` 改：`start` 先保存已领任务；`launch` 保存 turn 后启动带标记进程组；`check` 结合 pid、真实进程命令、退出标记区分运行、不可核实、退出；`stop` 保存 stopping/why，进程组确实结束后 `conclude` 得结果；回执重写由 repairs/turn/resume 表达，最多两次；`endWith` 先持久化 result，`settle` 才提交；接受或明确 4xx 拒收移除 entry，5xx/连接失败继续保留；`tidy` 只清没有 entry 的过期目录。
 
-进程读不到不等于已退出，退出码还没写不等于失败，已续接后中断不能换会话重做。私有部署在 `runner/private.ts` 另有已发生过的 413 保留约束。
+进程读不到不等于已退出，退出码还没写不等于失败，已续接后中断不能换会话重做。
 
 ## PR 交付、审查、发布
 
@@ -73,4 +73,4 @@
 | f25ce4a / #113、4f971cd / #88 | 重复审查漏掉原发现；同步 main 后结束轮次导致一直追赶 main。现绑定提交、同轮同步 |
 | 5285e0e / #240、e8748fd / #242 | 多项目交付、可信审查账本、应急重试的现行边界，不能再按已退役交付进程推断 |
 
-本轮先用回归复现再修：复查跨 Agent 携带会话、撤回缺进度终态、关闭 PR 留 pending，分别在 `tests/resume-thread.test.ts`、`tests/delivery.test.ts`、`tests/delivery-run.test.ts`。代码复现不等于已确认线上事故。私有旧库导入的 done 卡片可以缺 answer_event，不能当成当前写入者漏派回答；判定要查创建事实是否 legacy.import。
+#245 用回归复现后修了三处：复查跨 Agent 携带会话、撤回缺进度终态、关闭 PR 留 pending，分别在 `tests/resume-thread.test.ts`、`tests/delivery.test.ts`、`tests/delivery-run.test.ts`。代码复现不等于已确认线上事故。

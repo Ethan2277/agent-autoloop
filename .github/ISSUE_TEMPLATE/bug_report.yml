@@ -20,7 +20,7 @@ body:
     attributes:
       label: 运行环境
       description: 系统、Node.js 版本、相关 Agent 或插件，以及本机还是远程接单。
-      placeholder: macOS / Linux；node --version；Agent 名称与版本；相关通道。
+      placeholder: macOS / Linux / Windows；node --version；Agent 名称与版本；相关通道。
     validations:
       required: true
   - type: textarea
